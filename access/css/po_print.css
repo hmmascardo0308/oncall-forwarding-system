@@ -1,0 +1,230 @@
+        .po-title h2 {
+            font-size: 24px !important;
+        }
+        .status-badge-print {
+            display: inline-block;
+            padding: 3px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .status-badge-print.created {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .status-badge-print.approved {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .status-badge-print.received {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .status-badge-print.completed {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .status-badge-print.cancelled {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .truck-info-section {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #eee;
+            margin-top: 15px;
+            font-size: 13px;
+        }
+        .truck-info-section h3 {
+            margin: 0 0 10px;
+            font-size: 14px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+            color: #333;
+        }
+        .truck-info-section p {
+            margin: 5px 0;
+            line-height: 1.6;
+        }
+        .truck-info-section strong {
+            display: inline-block;
+            width: 120px;
+            color: #555;
+        }
+        .withholding-tax-section {
+            margin-top: 15px;
+            padding: 15px;
+            background: #fefce8;
+            border: 1px solid #fde047;
+            border-radius: 5px;
+        }
+        .withholding-tax-section h4 {
+            margin: 0 0 10px;
+            font-size: 13px;
+            color: #854d0e;
+        }
+        .withholding-tax-section .tax-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            font-size: 13px;
+        }
+        .withholding-tax-section .tax-row.net-amount {
+            font-weight: bold;
+            font-size: 15px;
+            border-top: 2px solid #fde047;
+            padding-top: 10px;
+            margin-top: 5px;
+        }
+        .footer-info {
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+            font-size: 12px;
+            color: #555;
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .vat-badge-print {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .vat-badge-print.inclusive {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .vat-badge-print.exclusive {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .terms-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 5px;
+            border: 1px solid #eee;
+        }
+        .terms-section h3 {
+            margin: 0 0 10px;
+            font-size: 14px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 8px;
+            color: #333;
+        }
+        .terms-grid-print {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 13px;
+        }
+        .terms-grid-print p {
+            margin: 5px 0;
+            line-height: 1.6;
+        }
+        .terms-grid-print strong {
+            display: inline-block;
+            width: 100px;
+            color: #555;
+        }
+        .delivery-address {
+            margin-top: 5px;
+            padding: 10px;
+            background: #f8fafc;
+            border-radius: 5px;
+            border: 1px solid #e2e8f0;
+            font-size: 13px;
+        }
+        
+        /* Reprint Badge Styles */
+        .print-container {
+            position: relative;
+            padding: 20px;
+        }
+        
+        .reprint-badge {
+            position: absolute;
+            top: 25px;
+            right: 30px;
+            background: #ffffff;
+            color: black;
+            padding: 8px 20px;
+            border-radius: 4px;
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            transform: rotate(15deg);
+            border: 3px solid #000000;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+            opacity: 0.9;
+        }
+        
+        .print-status-footer {
+            font-size: 11px;
+            color: #6b7280;
+            font-style: italic;
+        }
+        
+        .print-status-footer.original {
+            color: #059669;
+        }
+        
+        .print-status-footer.reprint {
+            color: #dc2626;
+        }
+        
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            .print-container {
+                padding: 20px !important;
+            }
+            .truck-info-section {
+                break-inside: avoid;
+            }
+            .terms-section {
+                break-inside: avoid;
+            }
+            .withholding-tax-section {
+                break-inside: avoid;
+            }
+            .reprint-badge {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                /* color-adjust: exact !important; */
+            }
+        }
+        .print-button {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px 20px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 1000;
+        }
+        .print-button:hover {
+            background: #1d4ed8;
+        }
+        
+        .reprint-label {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }

@@ -1,0 +1,101 @@
+   /* Reset & base */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+}
+
+body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background-image: url('images/company logo.png');
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    opacity: 0.1;          /* 👈 Change this value (0 = invisible, 1 = full) */
+    z-index: -1;
+}
+
+/* Login container */
+.login-container {
+    background: #ffffff38;
+    width: 100%;
+    max-width: 380px;
+    padding: 30px 28px;
+    border-radius: 10px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+}
+
+/* Title */
+.login-container h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #333;
+    font-weight: 600;
+}
+
+/* Error message */
+.login-container .message {
+    text-align: center;
+    margin-bottom: 15px;
+    color: #d9534f;
+    font-size: 14px;
+}
+
+/* Inputs */
+.login-container input[type="text"],
+.login-container input[type="password"] {
+    width: 100%;
+    padding: 11px 12px;
+    margin-bottom: 14px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.login-container input:focus {
+    outline: none;
+    border-color: #4ca1af;
+    box-shadow: 0 0 0 2px rgba(76, 161, 175, 0.15);
+}
+
+/* Button */
+.login-container button {
+    width: 100%;
+    padding: 11px;
+    background: #4ca1af;
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s, transform 0.1s;
+}
+
+.login-container button:hover {
+    background: #3b8d99;
+}
+
+.login-container button:active {
+    transform: translateY(1px);
+}
+
+/* Small screen support */
+@media (max-width: 480px) {
+    .login-container {
+        margin: 0 15px;
+        padding: 25px 20px;
+    }
+}
