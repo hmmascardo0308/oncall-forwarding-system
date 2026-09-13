@@ -352,7 +352,13 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <span class="icon-wrap"><i data-lucide="shopping-cart" style="width:18px;height:18px;"></i></span>
                     New Purchase Order
                 </h1>
+                 <span class="po-tag" id="po-number-display"><?php echo $nextPONumber; ?></span>
+                <span class="status-pending" id="status-display">Draft</span>
                 
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+               
+
                 <a href="purchase_order_list_all.php" class="view-orders-btn">
                     <i data-lucide="list" style="width:16px;height:16px;"></i>
                     View Orders
@@ -362,10 +368,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <i data-lucide="list" style="width:16px;height:16px;"></i>
                     Receive Orders
                 </a>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;">
-                <span class="po-tag" id="po-number-display"><?php echo $nextPONumber; ?></span>
-                <span class="status-pending" id="status-display">Draft</span>
             </div>
         </div>
 

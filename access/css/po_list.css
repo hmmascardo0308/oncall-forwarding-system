@@ -138,9 +138,27 @@
             flex-wrap: wrap;
         }
 
-        .table-wrapper { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        thead th { background: #fff7ed; color: black; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; padding: 12px 16px; text-align: left; border-bottom: 1px solid #fed7aa; position: sticky; top: 0; z-index: 10; }
+       .table-wrapper {
+    overflow: auto;
+    max-height: calc(100vh - 220px);   /* adjust the 220px depending on your page header height */
+}
+
+thead th {
+    background: #fff7ed;
+    color: #000;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 8px 14px;                 /* reduced vertical padding */
+    text-align: left;
+    border-bottom: 1px solid #fed7aa;
+    position: sticky;
+    top: 0;                            /* sticks exactly at the top edge */
+    z-index: 20;
+    white-space: nowrap;               /* keeps it single line like your latest screenshot */
+}
         tbody td { padding: 12px 16px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
         tbody tr { cursor: pointer; transition: background 0.2s; }
         tbody tr:hover td { background: #fffbf5; }

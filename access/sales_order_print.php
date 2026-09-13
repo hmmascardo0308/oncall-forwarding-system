@@ -198,6 +198,7 @@ $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
                 <p><strong>Payment Terms:</strong> <?= htmlspecialchars($so['payment_terms'] ?? 'N/A') ?></p>
                 <p><strong>Sales Rep:</strong> <?= htmlspecialchars(!empty($so['sales_rep']) ? $so['sales_rep'] : ($so['contact_person'] ?? 'N/A')) ?></p>
                 <p><strong>Driver:</strong> <?= htmlspecialchars($driver_name) ?></p>
+                <p><strong>Container Number:</strong> ___________________________</p>
             </div>
         </div>
 

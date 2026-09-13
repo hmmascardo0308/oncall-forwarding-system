@@ -246,6 +246,18 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             font-size: 13px;
             min-width: 150px;
         }
+        .table-container table tfoot td {
+    padding: 12px;
+    background: #f8f9fa;
+    border-top: 2px solid #dee2e6;
+  
+}
+.table-container table tfoot td.amount {
+    text-align: right;
+    color: #014e13;
+    font-size: 15px;
+
+}
     </style>
 </head>
 <body>
@@ -321,7 +333,7 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             <!-- Filters -->
             <form method="GET" class="filters-bar" id="filterForm">
                 <div class="search-wrapper">
-                    <i data-lucide="search" style="width:18px;height:18px;color:var(--text-muted);"></i>
+                    <i data-lucide="search" style="width:25px;height:25px;color: black;"></i>
                     <input type="text" name="search" placeholder="Search PO #, Supplier, Item, Created By..." value="<?php echo htmlspecialchars($search); ?>">
                 </div>
 
@@ -498,10 +510,18 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="5" style="text-align: right; font-weight: 600;">Total Amount:</td>
+                                <td class="amount" style="font-weight: 700;">
+                                    <?php echo number_format(array_sum(array_column($purchase_orders, 'net_amount_due')), 2); ?>
+                                </td>
+                                <td colspan="4"></td>
+                            </tr>
+                        </tfoot>
                     </table>
                     <div class="table-footer">
                         <span>Showing <?php echo count($purchase_orders); ?> record(s)</span>
-                        <span>Total Amount: <strong><?php echo number_format(array_sum(array_column($purchase_orders, 'net_amount_due')), 2); ?></strong></span>
                     </div>
                 <?php else: ?>
                     <div class="no-results">

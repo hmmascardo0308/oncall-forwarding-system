@@ -80,9 +80,9 @@
         }
 
         .filters-bar label {
-            font-size: 13px;
-            color: var(--text-muted);
-            font-weight: 500;
+            font-size: 14px;
+            color: black;
+            font-weight: 800;
         }
 
         .filters-bar input,
@@ -180,7 +180,7 @@
             display: inline-block;
             padding: 4px 10px;
             border-radius: 99px;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 500;
             text-transform: capitalize;
         }
@@ -221,6 +221,7 @@
         .amount {
             font-weight: 600;
             color: var(--text-main);
+            text-align: right;
         }
 
         .table-footer {

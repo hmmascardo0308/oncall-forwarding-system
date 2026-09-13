@@ -194,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
     <link rel="stylesheet" href="css/service_invoice.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
-    
+
 </head>
 <body>
 
@@ -269,6 +269,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             </div>
         </div>
 
+        <!-- Sales Order Selection Modal -->
+        <div id="soModal" class="so-modal-overlay">
+            <div class="so-modal">
+                <div class="so-modal-header">
+                    <div>
+                        <h3><i data-lucide="list-checks" style="width:18px;height:18px;vertical-align:middle;margin-right:6px;"></i> Select Sales Orders</h3>
+                        <p style="margin:6px 0 0 0;font-size:13px;color:#64748b;">
+                            Customer: <strong id="modalCustomerName">—</strong>
+                            <span style="margin-left:16px;">Selected: <strong id="modalSelectedCount">0</strong></span>
+                        </p>
+                    </div>
+                    <button type="button" class="so-modal-close" onclick="closeSOModal()">
+                        <i data-lucide="x" style="width:20px;height:20px;"></i>
+                    </button>
+                </div>
+
+                <div class="so-modal-toolbar">
+                    <button type="button" class="btn-secondary" onclick="selectAllInModal()" style="padding:6px 12px;font-size:12px;">
+                        <i data-lucide="check-square" style="width:14px;height:14px;"></i> Select All
+                    </button>
+                    <button type="button" class="btn-secondary" onclick="deselectAllInModal()" style="padding:6px 12px;font-size:12px;">
+                        <i data-lucide="square" style="width:14px;height:14px;"></i> Deselect All
+                    </button>
+                    <span style="margin-left:auto;font-size:13px;color:var(--text-muted);">
+                        Total: <strong id="modalSelectedTotal" style="color:#16a34a;">₱0.00</strong>
+                    </span>
+                </div>
+
+                <div class="so-modal-body">
+                    <div class="so-checkbox-grid" id="soCheckboxGridModal">
+                        <!-- SO checkboxes will be loaded here -->
+                    </div>
+                </div>
+
+                <div class="so-modal-footer">
+                    <span style="font-size:13px;color:var(--text-muted);">
+                        <i data-lucide="info" style="width:14px;height:14px;vertical-align:middle;"></i>
+                        Checked orders are added to the invoice line items automatically.
+                    </span>
+                    <button type="button" class="btn-primary" onclick="closeSOModal()" style="padding:8px 20px;">
+                        <i data-lucide="check" style="width:15px;height:15px;"></i> Done
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Invoice Header Banner -->
         <div class="invoice-banner">
             <div>
@@ -338,20 +384,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     </span>
                 </div>
 
-                <div class="so-checkbox-grid" id="soCheckboxGrid">
-                    <?php if (empty($filter_customer)): ?>
-                        <div class="empty-state">
-                            <div style="font-size:48px;margin-bottom:12px;">🔍</div>
-                            <h4 style="color:#64748b;">No Sales Orders Loaded</h4>
-                            <p style="color:#94a3b8;font-size:14px;">Please select a customer and click Search to load their sales orders.</p>
-                        </div>
-                    <?php elseif (empty($sales_orders)): ?>
-                        <div class="empty-state">
-                            <div style="font-size:48px;margin-bottom:12px;">📋</div>
-                            <h4 style="color:#64748b;">No Orders Found</h4>
-                            <p style="color:#94a3b8;font-size:14px;">No active sales orders found for this customer.</p>
-                        </div>
-                    <?php else: ?>
+                <!-- Hidden data container for JS to read filtered SOs -->
+                <div id="soDataStore" style="display:none;">
+                    <?php if (!empty($sales_orders)): ?>
                         <?php 
                         $grouped = [];
                         foreach ($sales_orders as $so) {
@@ -367,92 +402,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         }
                         ?>
                         <?php foreach ($grouped as $group): ?>
-                            <div style="grid-column:1/-1;margin-bottom:4px;">
-                                <div class="customer-group-header">
-                                    <span>
-                                        <span class="customer-code-badge"><?php echo htmlspecialchars($group['customer_code']); ?></span>
-                                        <?php echo htmlspecialchars($group['customer_name']); ?>
-                                    </span>
-                                    <span>
-                                        <span class="so-count"><?php echo count($group['orders']); ?> order(s)</span>
-                                        <span class="total-amount" style="margin-left:12px;">
-                                            Total: ₱<?php 
-                                                $group_total = 0;
-                                                foreach ($group['orders'] as $so) {
-                                                    $group_total += floatval($so['unit_price'] ?? 0);
-                                                }
-                                                echo number_format($group_total, 2);
-                                            ?>
-                                        </span>
-                                    </span>
+                            <?php foreach ($group['orders'] as $so): ?>
+                                <div class="so-data-item"
+                                     data-so-id="<?php echo htmlspecialchars($so['sales_order_no']); ?>"
+                                     data-customer-code="<?php echo htmlspecialchars($so['customer_code']); ?>"
+                                     data-customer-name="<?php echo htmlspecialchars($so['customer_name']); ?>"
+                                     data-truck="<?php echo htmlspecialchars($so['truck_code']); ?>"
+                                     data-plate="<?php echo htmlspecialchars($so['plate_number'] ?? ''); ?>"
+                                     data-brand="<?php echo htmlspecialchars($so['brand']); ?>"
+                                     data-model="<?php echo htmlspecialchars($so['model']); ?>"
+                                     data-unit-price="<?php echo htmlspecialchars($so['unit_price'] ?? 0); ?>"
+                                     data-discount-percent="<?php echo htmlspecialchars($so['discount_percent'] ?? 0); ?>"
+                                     data-vat-percent="<?php echo htmlspecialchars($so['vat_percent'] ?? 12); ?>"
+                                     data-payment-terms="<?php echo htmlspecialchars($so['payment_terms'] ?? 'Net 30'); ?>"
+                                     data-destination-from="<?php echo htmlspecialchars($so['destination_from'] ?? ''); ?>"
+                                     data-destination-to="<?php echo htmlspecialchars($so['destination_to'] ?? ''); ?>"
+                                     data-order-date="<?php echo htmlspecialchars($so['order_date'] ?? ''); ?>"
+                                     data-delivery-date="<?php echo htmlspecialchars($so['delivery_date'] ?? ''); ?>"
+                                     data-delivery-address="<?php echo htmlspecialchars($so['delivery_address'] ?? ''); ?>">
                                 </div>
-                                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:8px;padding-left:8px;">
-                                    <?php foreach ($group['orders'] as $so): ?>
-                                        <label class="so-checkbox-item" data-customer="<?php echo htmlspecialchars($so['customer_code']); ?>">
-                                            <input type="checkbox" 
-                                                   name="so_checkbox[]" 
-                                                   value="<?php echo htmlspecialchars($so['sales_order_no']); ?>"
-                                                   data-so-id="<?php echo htmlspecialchars($so['sales_order_no']); ?>"
-                                                   data-customer-code="<?php echo htmlspecialchars($so['customer_code']); ?>"
-                                                   data-customer-name="<?php echo htmlspecialchars($so['customer_name']); ?>"
-                                                   data-truck="<?php echo htmlspecialchars($so['truck_code']); ?>"
-                                                   data-plate="<?php echo htmlspecialchars($so['plate_number'] ?? ''); ?>"
-                                                   data-brand="<?php echo htmlspecialchars($so['brand']); ?>"
-                                                   data-model="<?php echo htmlspecialchars($so['model']); ?>"
-                                                   data-unit-price="<?php echo htmlspecialchars($so['unit_price'] ?? 0); ?>"
-                                                   data-discount-percent="<?php echo htmlspecialchars($so['discount_percent'] ?? 0); ?>"
-                                                   data-vat-percent="<?php echo htmlspecialchars($so['vat_percent'] ?? 12); ?>"
-                                                   data-payment-terms="<?php echo htmlspecialchars($so['payment_terms'] ?? 'Net 30'); ?>"
-                                                   data-destination-from="<?php echo htmlspecialchars($so['destination_from'] ?? ''); ?>"
-                                                   data-destination-to="<?php echo htmlspecialchars($so['destination_to'] ?? ''); ?>"
-                                                   data-order-date="<?php echo htmlspecialchars($so['order_date'] ?? ''); ?>"
-                                                   data-delivery-date="<?php echo htmlspecialchars($so['delivery_date'] ?? ''); ?>"
-                                                   data-delivery-address="<?php echo htmlspecialchars($so['delivery_address'] ?? ''); ?>"
-                                                   onchange="handleCheckboxChange(this)">
-                                            <span class="so-code"><?php echo htmlspecialchars($so['sales_order_no']); ?></span>
-                                            <span class="so-truck"><?php echo htmlspecialchars($so['truck_code']); ?></span>
-                                            <span class="so-destination">
-                                                <?php 
-                                                $from = substr($so['destination_from'] ?? '', 0, 10);
-                                                $to = substr($so['destination_to'] ?? '', 0, 10);
-                                                echo $from . ' → ' . $to;
-                                                ?>
-                                            </span>
-                                            <span class="so-amount">₱<?php echo number_format(floatval($so['unit_price'] ?? 0), 2); ?></span>
-                                        </label>
-                                    <?php endforeach; ?>
-                                </div>
-                            </div>
+                            <?php endforeach; ?>
                         <?php endforeach; ?>
                     <?php endif; ?>
                 </div>
 
-                <!-- Selected SO Summary with Line Items Preview -->
-                <div class="selected-so-summary" id="selectedSummary">
-                    <div style="font-weight:600;font-size:13px;color:#166534;margin-bottom:6px;">
-                        <i data-lucide="check-circle" style="width:16px;height:16px;"></i> Selected Sales Orders:
-                    </div>
-                    <div id="summaryList"></div>
-                    <div class="line-items-preview" id="lineItemsPreview" style="display:none;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>SO No.</th>
-                                    <th>Truck</th>
-                                    <th>From → To</th>
-                                    <th style="text-align:right;">Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody id="lineItemsBody">
-                            </tbody>
-                            <tfoot>
-                                <tr class="total-row">
-                                    <td colspan="3" style="text-align:right;font-weight:700;">GRAND TOTAL</td>
-                                    <td style="text-align:right;font-weight:700;color:#16a34a;" id="previewGrandTotal">₱0.00</td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
+                <!-- Prompt / button to open modal -->
+                <div id="soPromptBox" class="so-prompt-box">
+                    <?php if (empty($filter_customer)): ?>
+                        <div class="empty-state">
+                            <div style="font-size:48px;margin-bottom:12px;">🔍</div>
+                            <h4 style="color:#64748b;">No Customer Selected</h4>
+                            <p style="color:#94a3b8;font-size:14px;">Please select a customer above and click Search to load their sales orders.</p>
+                        </div>
+                    <?php elseif (empty($sales_orders)): ?>
+                        <div class="empty-state">
+                            <div style="font-size:48px;margin-bottom:12px;">📋</div>
+                            <h4 style="color:#64748b;">No Orders Found</h4>
+                            <p style="color:#94a3b8;font-size:14px;">No active sales orders found for this customer.</p>
+                        </div>
+                    <?php else: ?>
+                        <div style="text-align:center;padding:20px;">
+                            <i data-lucide="package-search" style="width:40px;height:40px;color:#53c0e1;margin-bottom:8px;"></i>
+                            <h4 style="color:#334155;margin-bottom:6px;">
+                                <?php 
+                                $totalOrders = count($sales_orders);
+                                echo $totalOrders . ' Sales Order' . ($totalOrders > 1 ? 's' : '') . ' available for ' . htmlspecialchars($filter_customer);
+                                ?>
+                            </h4>
+                            <p style="color:#64748b;font-size:13px;margin-bottom:14px;">Click the button below to select which orders to include in this invoice.</p>
+                            <button type="button" class="btn-primary" onclick="openSOModal()" style="padding:10px 22px;font-size:14px;">
+                                <i data-lucide="list-checks" style="width:16px;height:16px;"></i> Select Sales Orders
+                            </button>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -640,6 +642,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         return '₱' + parseFloat(val).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function calculateTotals() {
         const items = document.querySelectorAll('#items-body tr:not(#no-items-row)');
         let subtotal = 0;
@@ -711,6 +723,153 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     let selectedCustomerName = '';
     let selectedData = [];
 
+    // ===== Sales Order Modal Logic =====
+    function buildSOModalContent() {
+        const grid = document.getElementById('soCheckboxGridModal');
+        const dataItems = document.querySelectorAll('#soDataStore .so-data-item');
+        
+        if (dataItems.length === 0) {
+            grid.innerHTML = '<div class="empty-state" style="text-align:center;padding:40px;color:#94a3b8;">No sales orders available.</div>';
+            return;
+        }
+        
+        // Group by customer (usually just one)
+        const groups = {};
+        dataItems.forEach(item => {
+            const key = item.dataset.customerCode + '|' + item.dataset.customerName;
+            if (!groups[key]) {
+                groups[key] = {
+                    code: item.dataset.customerCode,
+                    name: item.dataset.customerName,
+                    orders: []
+                };
+            }
+            groups[key].orders.push(item);
+        });
+        
+        let html = '';
+        Object.values(groups).forEach(group => {
+            let groupTotal = 0;
+            group.orders.forEach(o => groupTotal += parseFloat(o.dataset.unitPrice) || 0);
+            
+            html += `
+                <div style="margin-bottom:8px;">
+                    <div class="customer-group-header">
+                        <span>
+                            <span class="customer-code-badge">${escapeHtml(group.code)}</span>
+                            ${escapeHtml(group.name)}
+                        </span>
+                        <span>
+                            <span class="so-count">${group.orders.length} order(s)</span>
+                            <span class="total-amount" style="margin-left:12px;">
+                                Total: ₱${groupTotal.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}
+                            </span>
+                        </span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px;padding-left:8px;">
+            `;
+            
+            group.orders.forEach(item => {
+                const soNo = item.dataset.soId;
+                const truck = item.dataset.truck;
+                const from = (item.dataset.destinationFrom || '').substring(0, 10);
+                const to = (item.dataset.destinationTo || '').substring(0, 10);
+                const price = parseFloat(item.dataset.unitPrice) || 0;
+                
+                // Restore checked state if already selected
+                const isChecked = selectedData.some(d => d.sales_order_no === soNo);
+                const disabled = selectedCustomerCode && selectedCustomerCode !== item.dataset.customerCode;
+                
+                html += `
+                    <label class="so-checkbox-item" data-customer="${escapeHtml(item.dataset.customerCode)}" style="${disabled ? 'opacity:0.5;' : ''}">
+                        <input type="checkbox" 
+                               value="${escapeHtml(soNo)}"
+                               data-so-id="${escapeHtml(soNo)}"
+                               data-customer-code="${escapeHtml(item.dataset.customerCode)}"
+                               data-customer-name="${escapeHtml(item.dataset.customerName)}"
+                               data-truck="${escapeHtml(truck)}"
+                               data-plate="${escapeHtml(item.dataset.plate || '')}"
+                               data-brand="${escapeHtml(item.dataset.brand || '')}"
+                               data-model="${escapeHtml(item.dataset.model || '')}"
+                               data-unit-price="${item.dataset.unitPrice || 0}"
+                               data-discount-percent="${item.dataset.discountPercent || 0}"
+                               data-vat-percent="${item.dataset.vatPercent || 12}"
+                               data-payment-terms="${escapeHtml(item.dataset.paymentTerms || 'Net 30')}"
+                               data-destination-from="${escapeHtml(item.dataset.destinationFrom || '')}"
+                               data-destination-to="${escapeHtml(item.dataset.destinationTo || '')}"
+                               data-order-date="${escapeHtml(item.dataset.orderDate || '')}"
+                               data-delivery-date="${escapeHtml(item.dataset.deliveryDate || '')}"
+                               data-delivery-address="${escapeHtml(item.dataset.deliveryAddress || '')}"
+                               ${isChecked ? 'checked' : ''}
+                               ${disabled ? 'disabled' : ''}
+                               onchange="handleCheckboxChange(this)">
+                        <span class="so-code">${escapeHtml(soNo)}</span>
+                        <span class="so-truck">${escapeHtml(truck)}</span>
+                        <span class="so-destination">${escapeHtml(from)} → ${escapeHtml(to)}</span>
+                        <span class="so-amount">₱${price.toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2})}</span>
+                    </label>
+                `;
+            });
+            
+            html += `</div></div>`;
+        });
+        
+        grid.innerHTML = html;
+        lucide.createIcons();
+        
+        // Update modal customer name display
+        const firstItem = dataItems[0];
+        document.getElementById('modalCustomerName').textContent = firstItem.dataset.customerName;
+        
+        updateModalCounters();
+    }
+
+    function openSOModal() {
+        buildSOModalContent();
+        document.getElementById('soModal').classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeSOModal() {
+        document.getElementById('soModal').classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    function updateModalCounters() {
+        const count = selectedData.length;
+        let total = 0;
+        selectedData.forEach(d => total += d.unit_price);
+        document.getElementById('modalSelectedCount').textContent = count;
+        document.getElementById('modalSelectedTotal').textContent = formatPHP(total);
+    }
+
+    function selectAllInModal() {
+        document.querySelectorAll('#soCheckboxGridModal input[type="checkbox"]:not(:disabled)').forEach(cb => {
+            if (!cb.checked) {
+                cb.checked = true;
+                handleCheckboxChange(cb);
+            }
+        });
+    }
+
+    function deselectAllInModal() {
+        document.querySelectorAll('#soCheckboxGridModal input[type="checkbox"]').forEach(cb => {
+            cb.checked = false;
+        });
+        // Reset selection state
+        selectedCustomerCode = '';
+        selectedCustomerName = '';
+        selectedData = [];
+        document.querySelectorAll('#soCheckboxGridModal .so-checkbox-item input[type="checkbox"]').forEach(cb => {
+            cb.disabled = false;
+            cb.closest('.so-checkbox-item').style.opacity = '1';
+        });
+        updateSelectionCounters();
+        clearDetails();
+        renderLineItems();
+        updateModalCounters();
+    }
+
     function handleCheckboxChange(checkbox) {
         const checked = checkbox.checked;
         const customerCode = checkbox.dataset.customerCode;
@@ -729,8 +888,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
         
-        // Update all checkboxes - disable those from different customers
-        const allCheckboxes = document.querySelectorAll('.so-checkbox-item input[type="checkbox"]');
+        // Update all checkboxes in modal - disable those from different customers
+        const allCheckboxes = document.querySelectorAll('#soCheckboxGridModal .so-checkbox-item input[type="checkbox"]');
         let anyChecked = false;
         selectedData = [];
         
@@ -780,9 +939,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             selectedData = [];
         }
         
-        updateSelectedSummary();
+        updateSelectionCounters();
         loadSelectedDetails();
         renderLineItems();
+        updateModalCounters();
     }
 
     function renderLineItems() {
@@ -813,37 +973,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             const to = (data.destination_to || '').substring(0, 15);
             
             row.innerHTML = `
-                <td><strong>${data.sales_order_no}</strong></td>
-                <td>${data.truck_code}</td>
-                <td style="font-size:11px;">${from} → ${to}</td>
+                <td><strong>${escapeHtml(data.sales_order_no)}</strong></td>
+                <td>${escapeHtml(data.truck_code)}</td>
+                <td style="font-size:11px;">${escapeHtml(from)} → ${escapeHtml(to)}</td>
                 <td style="text-align:center;">1</td>
                 <td style="text-align:right;">${formatPHP(data.unit_price)}</td>
                 <td style="text-align:right;font-weight:600;">${formatPHP(data.unit_price)}</td>
             `;
             tbody.appendChild(row);
         });
-        
-        // Update line items preview
-        const previewBody = document.getElementById('lineItemsBody');
-        previewBody.innerHTML = '';
-        let grandTotal = 0;
-        
-        selectedData.forEach(data => {
-            const tr = document.createElement('tr');
-            const from = (data.destination_from || '').substring(0, 12);
-            const to = (data.destination_to || '').substring(0, 12);
-            tr.innerHTML = `
-                <td>${data.sales_order_no}</td>
-                <td>${data.truck_code}</td>
-                <td style="font-size:10px;">${from} → ${to}</td>
-                <td style="text-align:right;">${formatPHP(data.unit_price)}</td>
-            `;
-            previewBody.appendChild(tr);
-            grandTotal += data.unit_price;
-        });
-        
-        document.getElementById('previewGrandTotal').textContent = formatPHP(grandTotal);
-        document.getElementById('lineItemsPreview').style.display = selectedData.length > 0 ? '' : 'none';
         
         calculateTotals();
     }
@@ -858,61 +996,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 
     function clearFilter() {
+        closeSOModal();
         window.location.href = 'service_invoice.php';
     }
 
-    function selectAll() {
-        const visibleItems = document.querySelectorAll('.so-checkbox-item');
-        visibleItems.forEach(item => {
-            const cb = item.querySelector('input[type="checkbox"]');
-            if (cb && !cb.disabled) {
-                cb.checked = true;
-                handleCheckboxChange(cb);
-            }
-        });
-    }
-
-    function deselectAll() {
-        const allCheckboxes = document.querySelectorAll('.so-checkbox-item input[type="checkbox"]');
-        allCheckboxes.forEach(cb => {
-            cb.checked = false;
-            cb.disabled = false;
-            cb.closest('.so-checkbox-item').style.opacity = '1';
-        });
-        selectedCustomerCode = '';
-        selectedCustomerName = '';
-        selectedData = [];
-        updateSelectedSummary();
-        clearDetails();
-        renderLineItems();
-        document.getElementById('selected_total_display').textContent = '₱0.00';
-    }
-
-    function updateSelectedSummary() {
+    // Replaces old updateSelectedSummary() — only updates the small counter in the toolbar
+    function updateSelectionCounters() {
         const count = selectedData.length;
         document.getElementById('selected_count').textContent = count;
         
-        const summary = document.getElementById('selectedSummary');
-        const list = document.getElementById('summaryList');
-        
-        if (count === 0) {
-            summary.classList.remove('active');
-            return;
-        }
-        
-        summary.classList.add('active');
-        let html = '';
         let total = 0;
-        selectedData.forEach(data => {
-            total += data.unit_price;
-            html += `<div class="summary-item">
-                <span class="so-code">${data.sales_order_no}</span>
-                <span style="color:#64748b;">${data.truck_code}</span>
-                <span style="color:#64748b;font-size:11px;">${data.brand} ${data.model}</span>
-                <span class="so-amount">${formatPHP(data.unit_price)}</span>
-            </div>`;
-        });
-        list.innerHTML = html;
+        selectedData.forEach(data => total += data.unit_price);
         document.getElementById('selected_total_display').textContent = formatPHP(total);
     }
 
@@ -944,6 +1038,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         document.getElementById('selected_so_data').value = JSON.stringify(selectedData);
         
         calculateDueDateFromTerms(paymentTerms);
+        updateModalCounters();
     }
 
     function clearDetails() {
@@ -955,7 +1050,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         document.getElementById('payment_terms_value').value = '';
         document.getElementById('selected_so_data').value = '';
         document.getElementById('delivery_address').value = '';
-        document.getElementById('lineItemsPreview').style.display = 'none';
     }
 
     function calculateDueDateFromTerms(terms) {
@@ -1011,9 +1105,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     document.addEventListener('DOMContentLoaded', function() {
         calculateDueDate();
         renderLineItems();
+
+        // Auto-open modal if a filter was applied and orders exist
+        <?php if (!empty($filter_customer) && !empty($sales_orders)): ?>
+        openSOModal();
+        <?php endif; ?>
     });
 
     document.getElementById('invoice_date').addEventListener('change', calculateDueDate);
+
+    // Close SO modal when clicking backdrop
+    document.getElementById('soModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+            closeSOModal();
+        }
+    });
+
+    // Close SO modal with Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const soModal = document.getElementById('soModal');
+            if (soModal && soModal.classList.contains('active')) {
+                closeSOModal();
+            }
+        }
+    });
 </script>
 </body>
 </html>

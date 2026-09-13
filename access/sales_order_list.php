@@ -12,7 +12,7 @@ if (!isset($_SESSION['user_id'])) {
 $user_id    = $_SESSION['user_id'];
 $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Guest';
-$full_name = $_SESSION['full_name'] ?? $username;
+$full_name  = $_SESSION['full_name'] ?? $username;
 
 // Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
@@ -34,7 +34,6 @@ if (!$can_access_so_list) {
 }
 
 // Define allowed pages based on roles (for sidebar access control)
-// Define allowed pages based on roles
 $allowed_pages = [
     'admin' => ['home.php', 'all_users.php', 'suppliers.php', 'items.php', 'customer.php', 'truck_masterlist.php', 'trailers.php', 'prime_movers.php', 'customer_pricing.php', 'purchase_order.php', 'sales_order.php', 'service_invoice.php', 'company_profile.php', 'purchase_orders_list.php', 'purchase_orders_view.php', 'general_settings.php', 'reset_password.php', 'sales_order_all.php', 'sales_order_list.php', 'aged_payables.php', 'reports.php', 'aged_receivables.php', 'employee_list.php'],
     'user' => ['home.php', 'suppliers.php', 'items.php', 'customer.php', 'truck_masterlist.php', 'trailers.php', 'prime_movers.php', 'customer_pricing.php', 'company_profile.php', 'purchase_orders_list.php', 'purchase_orders_view.php'],
@@ -208,10 +207,7 @@ $driver_code = $so['driver'] ?? '';
         <!-- Meta info row -->
         <div class="meta-info">
             <span>Created by: <strong><?= htmlspecialchars($so['created_by'] ?? '—') ?></strong></span>
-            <span>Created:<strong>
-        <?= !empty($so['created_date']) ? date('F j, Y g:i A', strtotime($so['created_date'])) : '—' ?>
-    </strong>
-</span>
+            <span>Created: <strong><?= !empty($so['created_date']) ? date('F j, Y g:i A', strtotime($so['created_date'])) : '—' ?></strong></span>
             <?php if (!empty($so['updated_by'])): ?>
                 <span>Updated by: <strong><?= htmlspecialchars($so['updated_by']) ?></strong></span>
                 <span>Updated: <strong><?= htmlspecialchars($so['updated_at']) ?></strong></span>
@@ -221,17 +217,17 @@ $driver_code = $so['driver'] ?? '';
         <?php if ($so['status'] === 'For Approval'): ?>
         <div class="readonly-banner">
             <i data-lucide="lock" style="width:16px;height:16px;"></i>
-            This Sales Order has been submitted for approval and is read-only. Use <strong>Revert to Draft</strong> to make changes.
+            This Sales Order has been submitted for approval and is read-only.
         </div>
         <?php endif; ?>
 
         <!-- Order Information -->
-        <div class="form-card <?= ($so['status'] === 'For Approval') ? 'readonly-mode' : '' ?>">
+        <div class="form-card">
             <div class="form-card-title"><i data-lucide="info" style="width:16px;height:16px;"></i> Order Information</div>
             <div class="form-grid">
                 <div class="form-group">
                     <label>Customer</label>
-                    <select id="customer-select">
+                    <select id="customer-select" disabled>
                         <option value="">-- Select Customer --</option>
                         <?php foreach ($customers as $cust):
                             $sel = ($cust['customer_code'] === $so['customer_code']) ? 'selected' : '';
@@ -247,19 +243,19 @@ $driver_code = $so['driver'] ?? '';
                     </select>
                 </div>
                 <div class="form-group"><label>Customer Code</label><input type="text" id="customer-code" value="<?= htmlspecialchars($so['customer_code'] ?? '') ?>" readonly></div>
-                <div class="form-group"><label>Order Date</label><input type="date" id="order-date" value="<?= htmlspecialchars($so['order_date'] ?? '') ?>"></div>
-                <div class="form-group"><label>Delivery Date</label><input type="date" id="delivery-date" value="<?= htmlspecialchars($so['delivery_date'] ?? '') ?>"></div>
-                <div class="form-group"><label>Payment Terms</label><input type="text" id="payment-terms" value="<?= htmlspecialchars($so['payment_terms'] ?? '') ?>" placeholder="Enter payment terms"></div>
+                <div class="form-group"><label>Order Date</label><input type="date" id="order-date" value="<?= htmlspecialchars($so['order_date'] ?? '') ?>" readonly></div>
+                <div class="form-group"><label>Delivery Date</label><input type="date" id="delivery-date" value="<?= htmlspecialchars($so['delivery_date'] ?? '') ?>" readonly></div>
+                <div class="form-group"><label>Payment Terms</label><input type="text" id="payment-terms" value="<?= htmlspecialchars($so['payment_terms'] ?? '') ?>" readonly placeholder="Enter payment terms"></div>
 
                 <!-- Truck selects — populated by JS after fetching trucks for this customer -->
                 <div class="form-group"><label>Truck Code</label>
-                    <select id="truck-code"><option value="">-- Select Truck --</option></select>
+                    <select id="truck-code" disabled><option value="">-- Select Truck --</option></select>
                 </div>
                 <div class="form-group"><label>Plate Number</label>
-                    <select id="plate-number"><option value="">-- Select Plate --</option></select>
+                    <select id="plate-number" disabled><option value="">-- Select Plate --</option></select>
                 </div>
                 <div class="form-group"><label>Assigned Truck</label>
-                    <select id="assigned-truck"><option value="">-- Select Assigned Truck --</option></select>
+                    <select id="assigned-truck" disabled><option value="">-- Select Assigned Truck --</option></select>
                 </div>
 
                 <!-- Driver Information - Display Only -->
@@ -275,6 +271,10 @@ $driver_code = $so['driver'] ?? '';
                 <div class="form-group"><label>Sales Rep</label><input type="text" id="sales-rep" value="<?= htmlspecialchars($sales_rep_val) ?>" readonly placeholder="Auto-filled."></div>
                 <div class="form-group"><label>Destination From</label><input type="text" id="destination-from" value="<?= htmlspecialchars($so['destination_from'] ?? '') ?>" readonly></div>
                 <div class="form-group"><label>Destination To</label><input type="text" id="destination-to" value="<?= htmlspecialchars($so['destination_to'] ?? '') ?>" readonly></div>
+                <div class="form-group">
+                    <label>Container Number <span style="color:#007155;font-size:11px;font-weight:600;">(editable)</span></label>
+                    <input type="text" id="container-number" value="<?= htmlspecialchars($so['container_number'] ?? '') ?>" placeholder="Enter container number" style="font-weight:600;color:#007155;border:1px solid #007155;">
+                </div>
                 <div class="form-group full-width"><label>Delivery Address</label>
                     <textarea id="delivery-address" readonly><?= htmlspecialchars($so['delivery_address'] ?? '') ?></textarea>
                 </div>
@@ -282,11 +282,11 @@ $driver_code = $so['driver'] ?? '';
         </div>
 
         <!-- Line Items -->
-        <div class="form-card <?= ($so['status'] === 'For Approval') ? 'readonly-mode' : '' ?>">
+        <div class="form-card">
             <div class="form-card-title" style="font-size: 15px; font-weight: 800; color: black;"><i data-lucide="package" style="width:16px;height:16px;"></i> Line Items</div>
             <div class="table-wrapper">
                  <table>
-                    <thead> <tr><th>#</th><th>Item Description</th><th>Unit</th><th>Qty</th><th>Unit Price</th><th>Discount (%)</th><th>Amount</th> </thead>
+                    <thead> <tr><th>#</th><th>Item Description</th><th>Unit</th><th>Qty</th><th>Unit Price</th><th>Discount (%)</th><th>Amount</th></tr> </thead>
                     <tbody id="items-body">
                          <tr>
                             <td style="color:var(--text-muted);font-weight:600;">1</td>
@@ -300,10 +300,10 @@ $driver_code = $so['driver'] ?? '';
                                 }
                             ?>
                             <td><input type="text" id="item-description" value="<?= htmlspecialchars($item_desc) ?>" readonly style="width:100%;background:#f1f5f9;font-weight:500;"></td>
-                            <td><input type="text" id="item-unit" value="<?= htmlspecialchars($so['unit'] ?? 'LOT') ?>" style="width:70px;text-align:center;"></td>
+                            <td><input type="text" id="item-unit" value="<?= htmlspecialchars($so['unit'] ?? 'LOT') ?>" style="width:70px;text-align:center;" readonly></td>
                             <td><input type="number" id="item-qty" value="<?= htmlspecialchars($so['quantity'] ?? 1) ?>" min="1" style="width:70px;text-align:center;" class="qty-input" readonly></td>
-                            <td><input type="number" id="item-price" value="<?= htmlspecialchars($so['unit_price'] ?? '0.00') ?>" min="0" step="0.01" style="width:110px;text-align:right;" class="price-input"></td>
-                            <td><input type="number" id="item-disc" value="<?= htmlspecialchars($so['discount_percent'] ?? '0') ?>" min="0" max="100" style="width:80px;text-align:center;" class="disc-input"></td>
+                            <td><input type="number" id="item-price" value="<?= htmlspecialchars($so['unit_price'] ?? '0.00') ?>" min="0" step="0.01" style="width:110px;text-align:right;" class="price-input" readonly></td>
+                            <td><input type="number" id="item-disc" value="<?= htmlspecialchars($so['discount_percent'] ?? '0') ?>" min="0" max="100" style="width:80px;text-align:center;" class="disc-input" readonly></td>
                             <td class="amount-cell" style="font-weight:600;text-align:right;">₱0.00</td>
                          </tr>
                     </tbody>
@@ -313,9 +313,9 @@ $driver_code = $so['driver'] ?? '';
 
         <!-- Totals + Notes -->
         <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
-            <div class="form-card <?= ($so['status'] === 'For Approval') ? 'readonly-mode' : '' ?>" style="flex:1;min-width:260px;">
+            <div class="form-card" style="flex:1;min-width:260px;">
                 <div class="form-card-title" style="font-size: 15px; font-weight: 800; color: black;"><i data-lucide="message-square" style="width:16px;height:16px;"></i> Notes & Instructions</div>
-                <textarea id="notes-field" style="width:100%;min-height:100px;"><?= htmlspecialchars($so['notes'] ?? '') ?></textarea>
+                <textarea id="notes-field" style="width:100%;min-height:100px;" readonly><?= htmlspecialchars($so['notes'] ?? '') ?></textarea>
             </div>
             <div class="totals-box">
                 <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">Subtotal</span><span id="subtotal">₱0.00</span></div>
@@ -329,12 +329,7 @@ $driver_code = $so['driver'] ?? '';
         <div class="actions-row" style="margin-top:32px;">
             <a href="sales_order.php" class="btn-secondary"><i data-lucide="arrow-left"></i> Back to New SO</a>
             <a href="sales_order_print.php?so=<?= htmlspecialchars($so_no) ?>" target="_blank" class="btn-secondary"><i data-lucide="printer"></i> Print SO</a>
-            <?php if ($so['status'] === 'Draft'): ?>
-                <button class="btn-secondary" id="btn-save-draft"><i data-lucide="save"></i> Save Changes</button>
-                <button class="btn-primary" id="btn-submit"><i data-lucide="send"></i> Submit For Approval</button>
-            <?php elseif ($so['status'] === 'For Approval'): ?>
-                <button class="btn-secondary" id="btn-revert"><i data-lucide="rotate-ccw"></i> Revert to Draft</button>
-            <?php endif; ?>
+            <button class="btn-primary" id="btn-save-container"><i data-lucide="save"></i> Save Container Number</button>
         </div>
     </div>
 </main>
@@ -353,21 +348,14 @@ const modal = document.getElementById('accessModal');
 
 // Check access function
 function checkAccess(page) {
-    // Admin has access to everything
-    if (userRoles.includes('admin')) {
-        return true;
-    }
-    
-    // Check each role for access
+    if (userRoles.includes('admin')) return true;
     for (let role of userRoles) {
         if (allowedPages[role] && allowedPages[role].includes(page)) {
             return true;
         }
     }
-    
-    // Show modal if not allowed
     modal.style.display = 'flex';
-    return false; // Prevent navigation
+    return false;
 }
 
 // Close modal function
@@ -384,16 +372,17 @@ modal.addEventListener('click', function(e) {
 
 // ── Prefilled data from PHP ───────────────────────────────────────────────────
 const PREFILL = {
-    customer_code: <?= json_encode($so['customer_code'] ?? '') ?>,
-    truck_code:    <?= json_encode($so['truck_code']    ?? '') ?>,
-    plate_number:  <?= json_encode($so['plate_number']  ?? '') ?>,
-    brand:         <?= json_encode($so['brand']         ?? '') ?>,
-    model:         <?= json_encode($so['model']         ?? '') ?>,
-    so_no:         <?= json_encode($so['sales_order_no']) ?>,
-    vat_percent:   <?= json_encode((float)($so['vat_percent'] ?? 12)) ?>,
+    customer_code:    <?= json_encode($so['customer_code'] ?? '') ?>,
+    truck_code:       <?= json_encode($so['truck_code']    ?? '') ?>,
+    plate_number:     <?= json_encode($so['plate_number']  ?? '') ?>,
+    brand:            <?= json_encode($so['brand']         ?? '') ?>,
+    model:            <?= json_encode($so['model']         ?? '') ?>,
+    so_no:            <?= json_encode($so['sales_order_no']) ?>,
+    vat_percent:      <?= json_encode((float)($so['vat_percent'] ?? 12)) ?>,
     item_description: <?= json_encode($item_desc) ?>,
-    driver_code:   <?= json_encode($so['driver'] ?? '') ?>,
-    driver_name:   <?= json_encode($so['driver_full_name'] ?? 'Not Assigned') ?>
+    driver_code:      <?= json_encode($so['driver'] ?? '') ?>,
+    driver_name:      <?= json_encode($so['driver_full_name'] ?? 'Not Assigned') ?>,
+    container_number: <?= json_encode($so['container_number'] ?? '') ?>
 };
 
 // ── Formatting ────────────────────────────────────────────────────────────────
@@ -416,85 +405,66 @@ function calcTotals() {
     document.getElementById('vat').textContent         = formatPHP(vat);
     document.getElementById('grand-total').textContent = formatPHP(net + vat);
 }
-document.getElementById('items-body').addEventListener('input', calcTotals);
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function showToast(msg, type = 'success') {
-    const t = document.getElementById('toast'); t.textContent = msg; t.className = 'show ' + type;
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'show ' + type;
     setTimeout(() => t.className = '', 3500);
 }
 
-// ── Collect payload ───────────────────────────────────────────────────────────
-function collectPayload(status) {
-    const row = document.querySelector('#items-body tr');
-    const qty   = parseFloat(row?.querySelector('.qty-input')?.value)   || 0;
-    const price = parseFloat(row?.querySelector('.price-input')?.value) || 0;
-    const disc  = parseFloat(row?.querySelector('.disc-input')?.value)  || 0;
-    const unit  = row?.querySelector('td:nth-child(3) input')?.value    || '';
-    const sub = qty * price, discAmt = sub * (disc / 100);
-    const custSel = document.getElementById('customer-select');
-    const custOpt = custSel.selectedOptions[0];
-    return {
-        so_no:            PREFILL.so_no,
-        customer_code:    custSel.value,
-        customer_name:    custOpt?.dataset.name || '',
-        sales_rep:        document.getElementById('sales-rep').value,
-        truck_code:       document.getElementById('truck-code').value,
-        plate_number:     document.getElementById('plate-number').value,
-        brand:            selectedTruckInfo?.brand || PREFILL.brand,
-        model:            selectedTruckInfo?.model || PREFILL.model,
-        unit,
-        destination_from: document.getElementById('destination-from').value,
-        destination_to:   document.getElementById('destination-to').value,
-        order_date:       document.getElementById('order-date').value,
-        delivery_date:    document.getElementById('delivery-date').value,
-        delivery_address: document.getElementById('delivery-address').value,
-        payment_terms:    document.getElementById('payment-terms').value,
-        vat_percent:      PREFILL.vat_percent,
-        unit_price:       price, discount_percent: disc,
-        amount:           sub - discAmt, discount_amount: discAmt, quantity: qty,
-        notes:            document.getElementById('notes-field').value,
-        driver:           PREFILL.driver_code,
-        status
-    };
-}
+// ── Save Container Number ─────────────────────────────────────────────────────
+async function saveContainerNumber() {
+    const containerNumber = document.getElementById('container-number').value.trim();
+    const btn = document.getElementById('btn-save-container');
 
-// Save/update — calls update_sales_order.php
-async function updateSO(status) {
-    const payload = collectPayload(status);
-    if (!payload.customer_code) { showToast('Please select a customer.', 'error'); return; }
-    document.querySelectorAll('#btn-save-draft, #btn-submit, #btn-revert').forEach(b => { if (b) b.disabled = true; });
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite;"></i> Saving...';
+    lucide.createIcons();
+
     try {
-        const res  = await fetch('update_sales_order.php', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const res = await fetch('update_container_number.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                so_no: PREFILL.so_no,
+                container_number: containerNumber
+            })
+        });
         const data = await res.json();
+
         if (data.success) {
-            const badge = document.getElementById('status-badge');
-            if (status === 'Draft') { badge.className = 'status-draft'; badge.textContent = 'Draft'; }
-            else { badge.className = 'status-approval'; badge.textContent = 'For Approval'; }
-            showToast(`${PREFILL.so_no} updated — ${status}`, 'success');
-            // Reload after short delay so action buttons reflect new status
-            setTimeout(() => window.location.reload(), 1200);
+            showToast('Container number saved successfully.', 'success');
+            PREFILL.container_number = containerNumber;
         } else {
-            showToast('Error: ' + (data.message || 'Update failed.'), 'error');
-            document.querySelectorAll('#btn-save-draft, #btn-submit, #btn-revert').forEach(b => { if (b) b.disabled = false; });
+            showToast('Error: ' + (data.message || 'Failed to save.'), 'error');
         }
-    } catch { showToast('Network error. Please try again.', 'error'); document.querySelectorAll('#btn-save-draft, #btn-submit, #btn-revert').forEach(b => { if (b) b.disabled = false; }); }
+    } catch (error) {
+        console.error('Save error:', error);
+        showToast('Network error. Please try again.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="save" style="width:16px;height:16px;"></i> Save Container Number';
+        lucide.createIcons();
+    }
 }
 
-document.getElementById('btn-save-draft')?.addEventListener('click', () => updateSO('Draft'));
-document.getElementById('btn-submit')?.addEventListener('click',     () => updateSO('For Approval'));
-document.getElementById('btn-revert')?.addEventListener('click',     () => updateSO('Draft'));
+document.getElementById('btn-save-container')?.addEventListener('click', saveContainerNumber);
 
-// ── Customer + Truck Logic ────────────────────────────────────────────────────
-let currentCustomerCode = PREFILL.customer_code;
-let currentTrucks = [], selectedTruckInfo = null;
+// Allow Enter key in container-number field to trigger save
+document.getElementById('container-number')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        saveContainerNumber();
+    }
+});
 
+// ── Populate Truck selects (read-only, just display) ─────────────────────────
 const els = {
-    customer: document.getElementById('customer-select'), code: document.getElementById('customer-code'),
-    rep: document.getElementById('sales-rep'), truckCode: document.getElementById('truck-code'),
-    plate: document.getElementById('plate-number'), assigned: document.getElementById('assigned-truck'),
-    destFrom: document.getElementById('destination-from'), destTo: document.getElementById('destination-to'),
-    deliveryAddr: document.getElementById('delivery-address')
+    truckCode: document.getElementById('truck-code'),
+    plate:     document.getElementById('plate-number'),
+    assigned:  document.getElementById('assigned-truck')
 };
 
 function populateTrucks(trucks) {
@@ -508,62 +478,16 @@ function populateTrucks(trucks) {
         els.truckCode.insertAdjacentHTML('beforeend', `<option value="${t.truck_code}" ${selT}>${t.truck_code}</option>`);
         els.plate.insertAdjacentHTML('beforeend',     `<option value="${t.plate_number}" ${selP}>${t.plate_number}</option>`);
         els.assigned.insertAdjacentHTML('beforeend',  `<option value="${t.truck_code}" ${selA}>${t.brand} [${t.model}]</option>`);
-        if (t.truck_code === PREFILL.truck_code) {
-            selectedTruckInfo = { truck_code: t.truck_code, brand: t.brand, model: t.model, plate_number: t.plate_number };
-        }
     });
 }
-
-function clearZones() { els.destFrom.value = ''; els.destTo.value = ''; }
-
-function fetchZones(tc, callback) {
-    if (!currentCustomerCode || !tc) return clearZones();
-    fetch(`get_customer_truck_zones.php?customer_code=${encodeURIComponent(currentCustomerCode)}&truck_code=${encodeURIComponent(tc)}`)
-        .then(r => r.json()).then(d => {
-            // Only overwrite if zones not already set from DB
-            if (!els.destFrom.value) els.destFrom.value = d?.zone_from || '';
-            if (!els.destTo.value)   els.destTo.value   = d?.zone_to   || '';
-            if (callback) callback();
-        }).catch(() => { if (callback) callback(); });
-}
-
-function syncTruckFields(source) {
-    let code = '';
-    if (source === 'truck')     code = els.truckCode.value;
-    else if (source === 'plate')     code = currentTrucks.find(t => t.plate_number === els.plate.value)?.truck_code || '';
-    else if (source === 'assigned')  code = els.assigned.value;
-    if (code && currentTrucks.length) {
-        const truck = currentTrucks.find(t => t.truck_code === code);
-        if (truck) {
-            els.truckCode.value = truck.truck_code; els.plate.value = truck.plate_number; els.assigned.value = truck.truck_code;
-            selectedTruckInfo = { truck_code: truck.truck_code, brand: truck.brand, model: truck.model, plate_number: truck.plate_number };
-            fetchZones(truck.truck_code);
-        }
-    }
-}
-
-els.customer.addEventListener('change', function () {
-    currentCustomerCode = this.value.trim();
-    if (!currentCustomerCode) { els.code.value = ''; els.rep.value = ''; if (els.deliveryAddr) els.deliveryAddr.value = ''; currentTrucks = []; selectedTruckInfo = null; populateTrucks([]); return; }
-    els.code.value = currentCustomerCode; els.rep.value = this.selectedOptions[0]?.dataset.contact || '';
-    if (els.deliveryAddr && !els.deliveryAddr.value) els.deliveryAddr.value = this.selectedOptions[0]?.dataset.fullAddress?.trim() || '';
-    fetch(`get_customer_trucks.php?customer_code=${encodeURIComponent(currentCustomerCode)}`)
-        .then(r => r.json()).then(data => { currentTrucks = Array.isArray(data) ? data : []; populateTrucks(currentTrucks); })
-        .catch(() => { currentTrucks = []; populateTrucks([]); });
-});
-
-els.truckCode.addEventListener('change', () => syncTruckFields('truck'));
-els.plate.addEventListener('change',     () => syncTruckFields('plate'));
-els.assigned.addEventListener('change',  () => syncTruckFields('assigned'));
 
 // ── Auto-load trucks for pre-filled customer on page load ─────────────────────
 if (PREFILL.customer_code) {
     fetch(`get_customer_trucks.php?customer_code=${encodeURIComponent(PREFILL.customer_code)}`)
         .then(r => r.json())
         .then(data => {
-            currentTrucks = Array.isArray(data) ? data : [];
-            populateTrucks(currentTrucks);
-            calcTotals(); // recalc after everything is ready
+            populateTrucks(Array.isArray(data) ? data : []);
+            calcTotals();
         })
         .catch(() => calcTotals());
 } else {
@@ -577,5 +501,95 @@ document.addEventListener('keydown', function(e) {
     }
 });
 </script>
+
+<style>
+/* ── Toast Notification ──────────────────────────────────────────────────── */
+#toast {
+    position: fixed;
+    top: 30px;
+    right: 30px;
+    padding: 14px 24px;
+    border-radius: 10px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: #ffffff;
+    background: #10b981;
+    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.25), 0 4px 10px rgba(0, 0, 0, 0.08);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-20px) scale(0.95);
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0.35s;
+    z-index: 9999;
+    max-width: 380px;
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: none;
+}
+#toast::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffffff;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
+}
+#toast.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+}
+#toast.show.success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.35), 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+#toast.show.error {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 10px 25px rgba(239, 68, 68, 0.35), 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Container Number Field ──────────────────────────────────────────────── */
+#container-number {
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+#container-number:focus {
+    outline: none;
+    border-color: #007155;
+    box-shadow: 0 0 0 3px rgba(0, 113, 85, 0.15);
+    background: #ffffff;
+}
+
+/* ── Save Button Loading State ───────────────────────────────────────────── */
+#btn-save-container:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+    transform: none;
+}
+#btn-save-container i[data-lucide="loader"] {
+    animation: spin 1s linear infinite;
+}
+
+/* ── Spin Animation ──────────────────────────────────────────────────────── */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+    #toast {
+        top: 16px;
+        right: 16px;
+        left: 16px;
+        max-width: none;
+        font-size: 13px;
+        padding: 12px 18px;
+    }
+}
+</style>
 </body>
 </html>

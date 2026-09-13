@@ -337,11 +337,11 @@ tbody td input, tbody td select {
 
 /* Status */
 .status-pending { 
-    background: #ffedd5; 
+    background: #ffd5d5; 
     color: #9a3412; 
     padding: 4px 12px; 
     border-radius: 99px; 
-    font-size: 12px; 
+    font-size: 15px; 
     font-weight: 600; 
 }
 
@@ -355,13 +355,13 @@ tbody td input, tbody td select {
 
 /* PO Tag */
 .po-tag { 
-    background: #fff7ed; 
+    background: #ffe6c7; 
     border: 1px solid #fdba74; 
-    color: #c2410c; 
+    color: #742607; 
     padding: 6px 14px; 
     border-radius: 8px; 
-    font-size: 13px; 
-    font-weight: 600; 
+    font-size: 25px; 
+    font-weight: 800; 
     letter-spacing: 0.5px; 
 }
 
@@ -496,12 +496,12 @@ tbody td input, tbody td select {
         }
         
         .view-orders-btn {
-            background: white;
+            background: rgb(0, 101, 119);
             border: 1px solid #e2e8f0;
-            color: #1f2937;
+            color: #ffffff;
             padding: 8px 16px;
             border-radius: 8px;
-            font-size: 14px;
+            font-size: 20px;
             font-weight: 500;
             display: inline-flex;
             align-items: center;

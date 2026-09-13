@@ -658,14 +658,7 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                                 <a href="sales_order_list.php?so=<?= urlencode($order['sales_order_no']) ?>" class="btn-action btn-view">
                                     <i data-lucide="eye" style="width:14px;height:14px;"></i>
                                 </a>
-                                <?php if (strtolower($order['status'] ?? '') === 'draft' && !isset($invoice_statuses[$order['sales_order_no']])): ?>
-                                <a href="sales_order_edit.php?id=<?= $order['id'] ?>" class="btn-action btn-edit">
-                                    <i data-lucide="edit-2" style="width:14px;height:14px;"></i>
-                                </a>
-                                <button onclick="deleteSO(<?= $order['id'] ?>, '<?= htmlspecialchars($order['sales_order_no']) ?>')" class="btn-action btn-delete">
-                                    <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
-                                </button>
-                                <?php endif; ?>
+                                <!-- Edit and Delete buttons removed as requested -->
                             </div>
                         </td>
                     </tr>
@@ -768,33 +761,6 @@ function checkAccess(page) {
     const modal = document.getElementById('accessModal');
     modal.style.display = 'flex';
     return false;
-}
-
-// Delete function
-async function deleteSO(id, soNo) {
-    if (!confirm(`Are you sure you want to delete Sales Order ${soNo}? This action cannot be undone.`)) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('delete_so.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: id })
-        });
-        
-        const result = await response.json();
-        
-        if (result.success) {
-            alert('Sales Order deleted successfully.');
-            window.location.reload();
-        } else {
-            alert('Error: ' + (result.message || 'Failed to delete order.'));
-        }
-    } catch (error) {
-        console.error('Delete error:', error);
-        alert('Network error occurred.');
-    }
 }
 
 // Auto-submit search on Enter
