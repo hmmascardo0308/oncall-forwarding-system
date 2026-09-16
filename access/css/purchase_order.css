@@ -512,8 +512,8 @@ tbody td input, tbody td select {
         }
         
         .view-orders-btn:hover {
-            background: #f9fafb;
-            border-color: #cbd5e1;
+            background:  #006577;
+            border-color: #00232a;
         }
         
         .page-header-actions {

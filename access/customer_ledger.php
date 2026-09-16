@@ -98,7 +98,7 @@ $role_display_name = getRoleDisplayName($user_roles);
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <link rel="stylesheet" href="css/home.css?v=<?= time(); ?>">
+    <!-- <link rel="stylesheet" href="css/home.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/customer_led.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
 </head>

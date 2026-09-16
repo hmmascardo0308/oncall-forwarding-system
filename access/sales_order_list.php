@@ -3,6 +3,7 @@
 // sales_order_list.php
 session_start();
 require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/../config/access_control.php'; // Include centralized access control
 
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
@@ -33,57 +34,11 @@ if (!$can_access_so_list) {
     exit;
 }
 
-// Define allowed pages based on roles (for sidebar access control)
-$allowed_pages = [
-    'admin' => ['home.php', 'all_users.php', 'suppliers.php', 'items.php', 'customer.php', 'truck_masterlist.php', 'trailers.php', 'prime_movers.php', 'customer_pricing.php', 'purchase_order.php', 'sales_order.php', 'service_invoice.php', 'company_profile.php', 'purchase_orders_list.php', 'purchase_orders_view.php', 'general_settings.php', 'reset_password.php', 'sales_order_all.php', 'sales_order_list.php', 'aged_payables.php', 'reports.php', 'aged_receivables.php', 'employee_list.php'],
-    'user' => ['home.php', 'suppliers.php', 'items.php', 'customer.php', 'truck_masterlist.php', 'trailers.php', 'prime_movers.php', 'customer_pricing.php', 'company_profile.php', 'purchase_orders_list.php', 'purchase_orders_view.php'],
-    'purchase_order_maker' => ['home.php', 'purchase_order.php', 'company_profile.php', 'purchase_orders_list.php', 'purchase_orders_view.php'],
-    'sales_order_maker' => ['home.php', 'sales_order.php', 'company_profile.php', 'sales_order_all.php', 'sales_order_list.php'],
-    'service_invoice_maker' => ['home.php', 'service_invoice.php', 'company_profile.php'],
-    'customer_pricer' => ['home.php', 'customer_pricing.php', 'company_profile.php']
-];
+// Define allowed pages based on roles - Now using centralized $allowed_pages from access_control.php
 
-// Function to check if user has access to a specific page
-function hasAccess($page, $user_roles, $allowed_pages) {
-    if (in_array('admin', $user_roles)) {
-        return true;
-    }
-    foreach ($user_roles as $role) {
-        if (isset($allowed_pages[$role]) && in_array($page, $allowed_pages[$role])) {
-            return true;
-        }
-    }
-    return false;
-}
+// Function to check if user has access to a specific page - Now using centralized hasAccess() function
 
-// Function to get display name for roles (for the badge)
-function getRoleDisplayName($user_roles) {
-    if (in_array('admin', $user_roles)) {
-        return 'Admin';
-    }
-    
-    $role_names = [];
-    foreach ($user_roles as $role) {
-        switch ($role) {
-            case 'purchase_order_maker':
-                $role_names[] = 'PO Maker';
-                break;
-            case 'sales_order_maker':
-                $role_names[] = 'SO Maker';
-                break;
-            case 'service_invoice_maker':
-                $role_names[] = 'SI Maker';
-                break;
-            case 'customer_pricer':
-                $role_names[] = 'Customer Pricer';
-                break;
-            default:
-                $role_names[] = ucfirst(str_replace('_', ' ', $role));
-        }
-    }
-    
-    return implode(' + ', $role_names);
-}
+// Function to get display name for roles - Now using centralized getRoleDisplayName() function
 
 $role_display_name = getRoleDisplayName($user_roles);
 
@@ -502,94 +457,6 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 
-<style>
-/* ── Toast Notification ──────────────────────────────────────────────────── */
-#toast {
-    position: fixed;
-    top: 30px;
-    right: 30px;
-    padding: 14px 24px;
-    border-radius: 10px;
-    font-family: 'Inter', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    color: #ffffff;
-    background: #10b981;
-    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.25), 0 4px 10px rgba(0, 0, 0, 0.08);
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(-20px) scale(0.95);
-    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0.35s;
-    z-index: 9999;
-    max-width: 380px;
-    line-height: 1.4;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    pointer-events: none;
-}
-#toast::before {
-    content: '';
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #ffffff;
-    flex-shrink: 0;
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
-}
-#toast.show {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0) scale(1);
-}
-#toast.show.success {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.35), 0 4px 10px rgba(0, 0, 0, 0.1);
-}
-#toast.show.error {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-    box-shadow: 0 10px 25px rgba(239, 68, 68, 0.35), 0 4px 10px rgba(0, 0, 0, 0.1);
-}
 
-/* ── Container Number Field ──────────────────────────────────────────────── */
-#container-number {
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-}
-#container-number:focus {
-    outline: none;
-    border-color: #007155;
-    box-shadow: 0 0 0 3px rgba(0, 113, 85, 0.15);
-    background: #ffffff;
-}
-
-/* ── Save Button Loading State ───────────────────────────────────────────── */
-#btn-save-container:disabled {
-    opacity: 0.75;
-    cursor: not-allowed;
-    transform: none;
-}
-#btn-save-container i[data-lucide="loader"] {
-    animation: spin 1s linear infinite;
-}
-
-/* ── Spin Animation ──────────────────────────────────────────────────────── */
-@keyframes spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-}
-
-/* ── Responsive ──────────────────────────────────────────────────────────── */
-@media (max-width: 600px) {
-    #toast {
-        top: 16px;
-        right: 16px;
-        left: 16px;
-        max-width: none;
-        font-size: 13px;
-        padding: 12px 18px;
-    }
-}
-</style>
 </body>
 </html>

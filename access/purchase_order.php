@@ -55,6 +55,14 @@ if (isset($_GET['action'])) {
         exit;
     }
     
+    // ─── Get Employees for dropdown ────────────────────────────────────────────
+    if ($_GET['action'] === 'get_employees') {
+        $stmt = $conn->query("SELECT employee_code, full_name FROM oncall_forwarding.employee_list ORDER BY full_name");
+        $rows = $stmt->fetch_all(MYSQLI_ASSOC);
+        echo json_encode($rows);
+        exit;
+    }
+    
     // ─── Get Company Address ───────────────────────────────────────────────────
     if ($_GET['action'] === 'get_company_address') {
         $stmt = $conn->query("SELECT full_address FROM oncall_forwarding.company_profile LIMIT 1");
@@ -111,20 +119,37 @@ if (isset($_GET['action'])) {
         $warranty = $conn->real_escape_string($input['warranty']);
         $remarks = $conn->real_escape_string($input['remarks']);
         $freight = floatval($input['freight']);
-        $subtotal = floatval($input['subtotal']);
-        $total_vat = floatval($input['total_vat']);
-        $total_amount = floatval($input['total_amount']);
+        
+        // These are the values sent from the frontend after all calculations
+        $subtotal = floatval($input['subtotal']);           // Subtotal (excl. tax), before PO discount
+        $total_vat = floatval($input['total_vat']);         // Adjusted VAT (after PO discount)
+        $total_amount = floatval($input['total_amount']);   // Adjusted Grand Total (after PO discount)
         $with_vat = isset($input['with_vat']) ? intval($input['with_vat']) : 1;
-        $withholding_tax_percent = isset($input['withholding_tax_percent']) ? floatval($input['withholding_tax_percent']) : 0;
-        $withholding_tax_amount = isset($input['withholding_tax_amount']) ? floatval($input['withholding_tax_amount']) : 0;
-        $net_amount_due = isset($input['net_amount_due']) ? floatval($input['net_amount_due']) : $total_amount;
         
         // Discount fields
         $discount_percent = isset($input['discount_percent']) ? floatval($input['discount_percent']) : 0;
         $discount_amount = isset($input['discount_amount']) ? floatval($input['discount_amount']) : 0;
         $item_discount_amount = isset($input['item_discount_amount']) ? floatval($input['item_discount_amount']) : 0;
         
+        // ── Withholding Tax (server-side recomputation) ────────────────────────
+        // Withholding Tax base is the Subtotal (excl. tax) after PO discount.
+        $withholding_tax_percent = isset($input['withholding_tax_percent']) ? floatval($input['withholding_tax_percent']) : 0;
+        
+        if ($withholding_tax_percent > 0) {
+            // Withholding base = Subtotal (excl. tax) − PO discount
+            $withholding_base = $subtotal - $discount_amount;
+            if ($withholding_base < 0) $withholding_base = 0;
+            
+            $withholding_tax_amount = $withholding_base * ($withholding_tax_percent / 100);
+            // Net Amount Due = Total PO Amount (VAT-incl.) − Withholding Tax
+            $net_amount_due = $total_amount - $withholding_tax_amount;
+        } else {
+            $withholding_tax_amount = 0;
+            $net_amount_due = $total_amount;
+        }
+        
         $created_by = $conn->real_escape_string($_SESSION['username'] ?? 'system');
+        $requested_by = $conn->real_escape_string($input['requested_by'] ?? '');
         $created_at = date('Y-m-d H:i:s');
         $status = 'Created';
         
@@ -183,6 +208,8 @@ if (isset($_GET['action'])) {
                 $vat_amount = floatval($item['vat_amount']);
                 $item_total = $unit_cost * $qty_ordered;
                 
+                // NOTE: The line item stores the item_total (before PO discount) and its original VAT.
+                // The PO header stores the adjusted total_amount and total_vat.
                 $sql = "INSERT INTO purchase_order (
                     po_number, supplier_code, supplier_name, purchase_type, po_date, 
                     expected_delivery, payment_terms, currency, delivery_address, delivery_mode,
@@ -190,7 +217,7 @@ if (isset($_GET['action'])) {
                     subtotal, total_vat, total_amount, status, created_by, created_at,
                     truck_code, brand, model, with_vat, withholding_tax_percent, withholding_tax_amount, net_amount_due,
                     trailer_code, prime_mover_code, customer_code,
-                    discount_percent, discount_amount, item_discount_amount
+                    discount_percent, discount_amount, item_discount_amount, requested_by
                 ) VALUES (
                     '$po_number', '$supplier_code', '$supplier_name', '$purchase_type', '$po_date',
                     " . ($expected_delivery ? "'$expected_delivery'" : "NULL") . ", '$payment_terms', '$currency', 
@@ -202,7 +229,7 @@ if (isset($_GET['action'])) {
                     " . ($trailer_code ? "'$trailer_code'" : "NULL") . ",
                     " . ($prime_mover_code ? "'$prime_mover_code'" : "NULL") . ",
                     " . ($customer_code ? "'$customer_code'" : "NULL") . ",
-                    $discount_percent, $discount_amount, $item_discount_amount
+                    $discount_percent, $discount_amount, $item_discount_amount, '$requested_by'
                 )";
                 
                 if (!$conn->query($sql)) {
@@ -257,12 +284,6 @@ if (!$can_access_po) {
     header("Location: home.php");
     exit;
 }
-
-// Define allowed pages based on roles - Now using centralized $allowed_pages from access_control.php
-
-// Function to check if user has access to a specific page - Now using centralized hasAccess() function
-
-// Function to get display name for roles - Now using centralized getRoleDisplayName() function
 
 $role_display_name = getRoleDisplayName($user_roles);
 $current_page = basename($_SERVER['PHP_SELF']);
@@ -425,8 +446,14 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Requested By</label>
-                    <input type="text" id="requested-by" value="<?php echo htmlspecialchars($username); ?>">
+                    <label>Processed By</label>
+                    <input type="text" id="processed-by" value="<?php echo htmlspecialchars($username); ?>" readonly>
+                </div>
+                <div class="form-group">
+                    <label>Requested By <span style="color: red;">*</span></label>
+                    <select id="requested-by-employee" required>
+                        <option value="">-- Select Employee --</option>
+                    </select>
                 </div>
                 <div class="form-group full-width">
                     <label>Delivery / Ship-To Address</label>
@@ -575,7 +602,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <div id="tax-details" style="display: none;">
                         <div class="tax-details">
                             <div class="tax-row">
-                                <span class="tax-label">Total PO Amount: </span>
+                                <span class="tax-label">Subtotal (excl. tax):</span>
                                 <span class="tax-value" id="tax-base-amount">₱0.00</span>
                             </div>
                             <div class="tax-row">
@@ -640,6 +667,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     let trailersData  = [];
     let primeMoversData = [];
     let customersData = [];
+    let employeesData = [];
     let rowCount      = 0;
     let isSyncing     = false;
     let selectedMotorpoolCategory = null;
@@ -727,6 +755,26 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         } catch (e) {
             console.error('Failed to load customers:', e);
         }
+    }
+    
+    // ── Load Employees ─────────────────────────────────────────────────────────
+    async function loadEmployees() {
+        try {
+            const res = await fetch('purchase_order.php?action=get_employees');
+            employeesData = await res.json();
+            populateEmployeeDropdown();
+        } catch (e) {
+            console.error('Failed to load employees:', e);
+        }
+    }
+    
+    // ── Populate Employee Dropdown ─────────────────────────────────────────────
+    function populateEmployeeDropdown() {
+        const select = document.getElementById('requested-by-employee');
+        select.innerHTML = '<option value="">-- Select Employee --</option>';
+        employeesData.forEach(emp => {
+            select.innerHTML += `<option value="${emp.full_name}">${emp.full_name}</option>`;
+        });
     }
     
     // ── Build Item Options ────────────────────────────────────────────────────
@@ -971,7 +1019,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         let totalItemSubtotal = 0; // Item subtotal before discounts
         let totalItemDiscount = 0;
         let subtotal = 0; // Subtotal after item discounts (excl. VAT)
-        let totalVAT = 0;
         const withVAT = document.getElementById('vat-toggle').checked;
         
         document.querySelectorAll('#items-body tr').forEach(row => {
@@ -989,7 +1036,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 const vatAmount = discountedTotal * (12 / 112);
                 const withoutVAT = discountedTotal - vatAmount;
                 subtotal += withoutVAT;
-                totalVAT += vatAmount;
             } else {
                 subtotal += discountedTotal;
             }
@@ -1004,22 +1050,39 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             document.getElementById('po-discount-amount').value = poDiscountAmount.toFixed(2);
         }
         
+        // ── CHANGED: Recalculate VAT and Grand Total AFTER PO Discount ──────────
         const subtotalAfterPODiscount = subtotal - poDiscountAmount;
+        
+        let finalVAT = 0;
+        if (withVAT) {
+            // Recompute VAT based on the discounted subtotal
+            finalVAT = subtotalAfterPODiscount * 0.12;
+        }
+        
         const freight = parseFloat(document.getElementById('freight').value) || 0;
         
-        // Grand Total = Subtotal (after item discounts) - PO Discount + VAT + Freight
-        const grand = subtotalAfterPODiscount + totalVAT + freight;
+        // Grand Total = Discounted Subtotal + New VAT + Freight
+        const grand = subtotalAfterPODiscount + finalVAT + freight;
         
         // Display values
         document.getElementById('item-subtotal-display').textContent = formatPHP(totalItemSubtotal);
         document.getElementById('item-discount-total').textContent = formatPHP(totalItemDiscount);
         document.getElementById('subtotal').textContent = formatPHP(subtotal);
-        document.getElementById('vat-total').textContent = formatPHP(totalVAT);
+        document.getElementById('vat-total').textContent = formatPHP(finalVAT); // Use the new finalVAT
         document.getElementById('grand-total').textContent = formatPHP(grand);
         
-        updateWithholdingTax(grand);
+        // Withholding tax base is Subtotal (excl. tax) after PO discount
+        updateWithholdingTax(subtotalAfterPODiscount, grand);
         
-        return { itemSubtotal: totalItemSubtotal, totalItemDiscount, subtotal, totalVAT, grand, poDiscountAmount };
+        return {
+            itemSubtotal: totalItemSubtotal,
+            totalItemDiscount,
+            subtotal,
+            totalVAT: finalVAT, // Return the adjusted VAT
+            grand,
+            poDiscountAmount,
+            subtotalAfterPODiscount
+        };
     }
     
     // ── Withholding Tax Functions ──────────────────────────────────────────────
@@ -1033,22 +1096,31 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             taxDetails.style.display = 'none';
         }
         
-        const grandTotal = parseFloat(document.getElementById('grand-total').textContent.replace('₱', '').replace(/,/g, '')) || 0;
-        updateWithholdingTax(grandTotal);
+        // ← CHANGED: Recompute totals and use the new (taxBase, grandTotal) signature
+        const totals = calcTotals();
+        updateWithholdingTax(totals.subtotalAfterPODiscount, totals.grand);
     }
     
-    function updateWithholdingTax(grandTotal) {
+    /**
+     * Update the withholding tax display.
+     * @param {number} taxBase    Subtotal (excl. tax) after PO discount — base for the 5% WHT.
+     * @param {number} grandTotal Total PO Amount (VAT-incl., + freight) — used for Net Amount Due.
+     */
+    function updateWithholdingTax(taxBase, grandTotal) {
         const isChecked = document.getElementById('apply-withholding-tax').checked;
         const taxBaseSpan = document.getElementById('tax-base-amount');
         const withholdingSpan = document.getElementById('withholding-tax-amount');
         const netAmountSpan = document.getElementById('net-amount-due');
         
+        // Always display the VAT-exclusive base
         if (taxBaseSpan) {
-            taxBaseSpan.textContent = formatPHP(grandTotal);
+            taxBaseSpan.textContent = formatPHP(taxBase);
         }
         
         if (isChecked) {
-            const withholdingTax = grandTotal * 0.05;
+            // ← CHANGED: 5% of Subtotal (excl. tax), not of grand total
+            const withholdingTax = taxBase * 0.05;
+            // Net = Total PO Amount − Withholding Tax
             const netAmount = grandTotal - withholdingTax;
             
             if (withholdingSpan) withholdingSpan.textContent = formatPHP(withholdingTax);
@@ -1430,8 +1502,11 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         let netAmountDue = totals.grand;
         
         if (applyWithholdingTax) {
+            // Withholding base = Subtotal (excl. tax) after PO discount
+            const withholdingBase = totals.subtotalAfterPODiscount;
             withholdingTaxPercent = 5;
-            withholdingTaxAmount = totals.grand * 0.05;
+            withholdingTaxAmount = withholdingBase * 0.05;
+            // Net Amount Due = Total PO Amount (VAT-incl.) − Withholding Tax
             netAmountDue = totals.grand - withholdingTaxAmount;
         }
         
@@ -1479,15 +1554,15 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             expected_delivery: document.getElementById('expected-delivery').value,
             payment_terms: document.getElementById('payment-terms').value,
             currency: document.getElementById('currency').value,
-            requested_by: document.getElementById('requested-by').value,
+            requested_by: document.getElementById('requested-by-employee').value,
             delivery_address: document.getElementById('delivery-address').value,
             delivery_mode: document.getElementById('delivery-mode').value,
             warranty: document.getElementById('warranty').value,
             remarks: document.getElementById('remarks').value,
             freight: parseFloat(document.getElementById('freight').value) || 0,
-            subtotal: totals.subtotal,
-            total_vat: totals.totalVAT,
-            total_amount: totals.grand,
+            subtotal: totals.subtotal, // This is the original subtotal (excl. tax) before PO discount
+            total_vat: totals.totalVAT, // This is now the ADJUSTED VAT
+            total_amount: totals.grand, // This is now the ADJUSTED Total PO Amount
             with_vat: withVAT ? 1 : 0,
             withholding_tax_percent: withholdingTaxPercent,
             withholding_tax_amount: withholdingTaxAmount,
@@ -1514,11 +1589,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 const discountAmount = parseFloat(row.querySelector('.discount-amount-input').value) || 0;
                 const partNumber = row.dataset.partNumber || '';
                 
-                // Calculate item total before discount
                 let itemSubtotal = qty * unitCost;
                 let finalDiscount = discountAmount;
                 
-                // If discount percent is entered, calculate discount amount
                 if (discountPercent > 0) {
                     finalDiscount = itemSubtotal * (discountPercent / 100);
                 }
@@ -1527,6 +1600,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 let withoutVAT, vatAmount;
                 
                 if (withVAT) {
+                    // Note: For individual items, we show the VAT portion based on the undiscounted PO level.
+                    // The backend recalculates the final PO total, but for line items, this is the standard representation.
                     withoutVAT = discountedTotal / 1.12;
                     vatAmount = discountedTotal - withoutVAT;
                 } else {
@@ -1534,15 +1609,12 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     vatAmount = 0;
                 }
                 
-                // Extract item name without part number
                 const fullText = selectedOption.text;
                 let itemName = fullText;
-                // Remove part number in parentheses if exists
                 const partNumberMatch = fullText.match(/\([^)]*\)$/);
                 if (partNumberMatch) {
                     itemName = fullText.replace(/\s*\([^)]*\)$/, '').trim();
                 }
-                // Remove item code
                 const codeMatch = itemName.match(/^\[[^\]]*\]\s*/);
                 if (codeMatch) {
                     itemName = itemName.replace(codeMatch[0], '').trim();
@@ -1579,6 +1651,12 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         
         if (!purchaseType) {
             alert('Please select a purchase type');
+            return;
+        }
+        
+        // Validate Requested By
+        if (!document.getElementById('requested-by-employee').value) {
+            alert('Please select who requested this purchase order');
             return;
         }
         
@@ -1654,14 +1732,15 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     }
 
     // ── Init ──────────────────────────────────────────────────────────────────
-    // Load suppliers, items, trucks, trailers, prime movers, and customers in parallel
+    // Load suppliers, items, trucks, trailers, prime movers, customers, and employees in parallel
     Promise.all([
         loadSuppliers(),
         loadAllItems(),
         loadTrucks(),
         loadTrailers(),
         loadPrimeMovers(),
-        loadCustomers()
+        loadCustomers(),
+        loadEmployees()
     ]).then(() => {
         // All data loaded
     });

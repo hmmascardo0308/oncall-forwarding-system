@@ -696,3 +696,95 @@ tbody td select {
     border-radius: 8px;
     padding: 8px;
 }
+
+
+
+
+
+/* ── Toast Notification ──────────────────────────────────────────────────── */
+#toast {
+    position: fixed;
+    top: 30px;
+    right: 30px;
+    padding: 14px 24px;
+    border-radius: 10px;
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: #ffffff;
+    background: #10b981;
+    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.25), 0 4px 10px rgba(0, 0, 0, 0.08);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-20px) scale(0.95);
+    transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0.35s;
+    z-index: 9999;
+    max-width: 380px;
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: none;
+}
+#toast::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ffffff;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
+}
+#toast.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+}
+#toast.show.success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 10px 25px rgba(16, 185, 129, 0.35), 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+#toast.show.error {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    box-shadow: 0 10px 25px rgba(239, 68, 68, 0.35), 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Container Number Field ──────────────────────────────────────────────── */
+#container-number {
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+#container-number:focus {
+    outline: none;
+    border-color: #007155;
+    box-shadow: 0 0 0 3px rgba(0, 113, 85, 0.15);
+    background: #ffffff;
+}
+
+/* ── Save Button Loading State ───────────────────────────────────────────── */
+#btn-save-container:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+    transform: none;
+}
+#btn-save-container i[data-lucide="loader"] {
+    animation: spin 1s linear infinite;
+}
+
+/* ── Spin Animation ──────────────────────────────────────────────────────── */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+    #toast {
+        top: 16px;
+        right: 16px;
+        left: 16px;
+        max-width: none;
+        font-size: 13px;
+        padding: 12px 18px;
+    }
+}

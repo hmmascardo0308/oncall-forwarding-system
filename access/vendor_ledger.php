@@ -280,40 +280,11 @@ $role_display_name = getRoleDisplayName($user_roles);
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <link rel="stylesheet" href="css/home.css?v=<?= time(); ?>">
+    <!-- <link rel="stylesheet" href="css/home.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/vendor_ledger.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
 
-    <style>
-        .status-cell-badges {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            align-items: flex-start;
-        }
-        .status-cell-badges .badge-status {
-            white-space: nowrap;
-        }
-        .badge-info {
-            background-color: #e0f2fe;
-            color: #0369a1;
-            border: 1px solid #7dd3fc;
-        }
-        .auto-badge {
-            display: inline-block;
-            font-size: 9px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-            color: #0369a1;
-            background: #e0f2fe;
-            border: 1px solid #bae6fd;
-            border-radius: 4px;
-            padding: 1px 5px;
-            margin-top: 2px;
-            text-transform: uppercase;
-        }
-        .cancelled-row td { opacity: 0.6; }
-    </style>
+   
 </head>
 <body>
 

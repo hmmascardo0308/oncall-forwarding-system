@@ -26,8 +26,8 @@ if (!$po_details) {
 // Check if this is a reprint - check the URL parameter
 $is_reprint = isset($_GET['is_reprint']) && $_GET['is_reprint'] == 1;
 
-// Get requested_by from URL parameter (passed from view page)
-$requested_by = isset($_GET['requested_by']) ? $_GET['requested_by'] : '';
+// Get requested_by directly from the purchase_order table
+$requested_by = $po_details['requested_by'] ?? '';
 
 // Get all items for this PO
 $items_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '$safe_po_number' ORDER BY id");
@@ -40,56 +40,64 @@ if (empty($po_items)) {
     die("No items found for this Purchase Order.");
 }
 
-// Calculate summary from first item (all items in same PO should have same totals)
+// ─── CORRECTED TOTALS – matches purchase_order.php creation logic exactly ──
+// Unit costs are VAT-inclusive when with_vat = 1.
+
 $first_item = $po_items[0];
-$with_vat = $first_item['with_vat'] ?? 1;
-$subtotal = $first_item['subtotal'] ?? 0;
-$total_vat = $first_item['total_vat'] ?? 0;
-$freight = $first_item['freight'] ?? 0;
-$withholding_tax_percent = $first_item['withholding_tax_percent'] ?? 0;
-$withholding_tax_amount = $first_item['withholding_tax_amount'] ?? 0;
-$net_amount_due = $first_item['net_amount_due'] ?? 0;
 
-// Discount fields
-$discount_percent = $first_item['discount_percent'] ?? 0;
-$discount_amount = $first_item['discount_amount'] ?? 0;
-$item_discount_amount = $first_item['item_discount_amount'] ?? 0;
-
-// --- RECALCULATE TOTALS FROM ITEMS ---
 $item_subtotal_before_discounts = 0;
-$total_item_discount = 0;
-$recalculated_subtotal = 0;
-$recalculated_total_vat = 0;
+$total_item_discount            = 0;
 
 foreach ($po_items as $item) {
-    $unit_cost = floatval($item['unit_cost']);
-    $qty_ordered = intval($item['qty_ordered']);
+    $unit_cost     = floatval($item['unit_cost']);
+    $qty_ordered   = intval($item['qty_ordered']);
     $item_discount = floatval($item['item_discount_amount'] ?? 0);
-    
-    $item_subtotal = $unit_cost * $qty_ordered;
-    $item_subtotal_before_discounts += $item_subtotal;
-    $total_item_discount += $item_discount;
-    $discounted_total = $item_subtotal - $item_discount;
-    
-    if ($with_vat) {
-        $without_vat = $discounted_total / 1.12;
-        $vat_amount = $discounted_total - $without_vat;
-        $recalculated_subtotal += $without_vat;
-        $recalculated_total_vat += $vat_amount;
-    } else {
-        $recalculated_subtotal += $discounted_total;
-    }
+
+    $item_subtotal_before_discounts += $unit_cost * $qty_ordered;
+    $total_item_discount            += $item_discount;
 }
 
-// Use the recalculated values
-$display_subtotal = $recalculated_subtotal;
-$display_total_vat = $recalculated_total_vat;
+$discounted_inclusive = $item_subtotal_before_discounts - $total_item_discount;
 
-// Calculate grand total: Subtotal (after item discounts) - PO Discount + VAT + Freight
-$grand_total = $display_subtotal - $discount_amount + $display_total_vat + $freight;
+$with_vat                = intval($first_item['with_vat'] ?? 1);
+$po_discount_amount      = floatval($first_item['discount_amount'] ?? 0);
+$po_discount_percent     = floatval($first_item['discount_percent'] ?? 0);
+$freight                 = floatval($first_item['freight'] ?? 0);
+$withholding_tax_percent = floatval($first_item['withholding_tax_percent'] ?? 0);
 
-// If withholding tax is applied, calculate net amount due
-$display_net_amount_due = $net_amount_due > 0 ? $net_amount_due : $grand_total;
+if ($with_vat) {
+    // Subtotal (excl. tax) BEFORE PO discount
+    $display_subtotal = $discounted_inclusive / 1.12;
+} else {
+    $display_subtotal = $discounted_inclusive;
+}
+
+// PO discount applied to exclusive subtotal
+$subtotal_after_po_discount = $display_subtotal - $po_discount_amount;
+if ($subtotal_after_po_discount < 0) $subtotal_after_po_discount = 0;
+
+// VAT recomputed on the discounted exclusive subtotal
+if ($with_vat) {
+    $display_total_vat = $subtotal_after_po_discount * 0.12;
+} else {
+    $display_total_vat = 0;
+}
+
+$grand_total = $subtotal_after_po_discount + $display_total_vat + $freight;
+
+// Withholding base = exclusive subtotal AFTER PO discount
+$wht_base = $subtotal_after_po_discount;
+if ($withholding_tax_percent > 0) {
+    $withholding_tax_amount = $wht_base * ($withholding_tax_percent / 100);
+    $display_net_amount_due = $grand_total - $withholding_tax_amount;
+} else {
+    $withholding_tax_amount = 0;
+    $display_net_amount_due = $grand_total;
+}
+
+// Aliases used by the rest of the template
+$discount_amount  = $po_discount_amount;
+$discount_percent = $po_discount_percent;
 
 // Get company profile
 $company_query = $conn->query("SELECT * FROM company_profile LIMIT 1");
@@ -302,16 +310,16 @@ if ($created_by) {
     <?php if ($withholding_tax_percent > 0): ?>
     <div class="tax-section-print">
         <div class="tax-row-print">
-            <span class="tax-label">Total PO Amount:</span>
-            <span class="tax-value">₱ <?= number_format($grand_total, 2) ?></span>
+            <span class="tax-label">Subtotal (excl. tax):</span>
+            <span class="tax-value">₱ <?= number_format($wht_base, 2) ?></span>
         </div>
         <div class="tax-row-print">
             <span class="tax-label">Withholding Tax (<?= $withholding_tax_percent ?>%):</span>
             <span class="tax-value">₱ <?= number_format($withholding_tax_amount, 2) ?></span>
         </div>
         <div class="tax-row-print net-amount-row">
-            <span class="tax-label">GRAND TOTAL:</span>
-            <span class="tax-value">₱ <?= number_format($grand_total - $withholding_tax_amount, 2) ?></span>
+            <span class="tax-label">Net Amount Due:</span>
+            <span class="tax-value">₱ <?= number_format($display_net_amount_due, 2) ?></span>
         </div>
     </div>
     <?php else: ?>

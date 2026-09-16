@@ -1,3 +1,5 @@
+/* aged_rec.css - Consolidated styles for Aged Receivables page */
+
 :root {
     --sidebar-width: 260px;
     --primary-bg: #f8fafc;
@@ -6,16 +8,33 @@
     --text-main: #1e293b;
     --text-muted: #64748b;
     --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-    --modal-bg: rgba(0,0,0,0.6);
+    --modal-bg: rgba(0, 0, 0, 0.6);
 }
 
-* { box-sizing: border-box; }
-body { 
-    margin: 0; 
-    font-family: 'Inter', sans-serif; 
-    background: var(--primary-bg); 
-    color: var(--text-main); 
-    display: flex; 
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: 'Inter', sans-serif;
+    background: var(--primary-bg);
+    color: var(--text-main);
+    display: flex;
+}
+
+/* ============================================
+   MAIN CONTENT AREA
+   ============================================ */
+.main-content {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    min-height: 100vh;
+    background-image: url('../../images/company logo.png');
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    position: relative;
 }
 
 .main-content::before {
@@ -34,6 +53,9 @@ body {
     z-index: 1;
 }
 
+/* ============================================
+   HEADER
+   ============================================ */
 header {
     background: #fff;
     height: 64px;
@@ -44,6 +66,30 @@ header {
     border-bottom: 1px solid #e2e8f0;
 }
 
+.breadcrumb {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.user-profile {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.badge {
+    padding: 4px 10px;
+    background: #dbeafe;
+    color: #1e40af;
+    border-radius: 99px;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: capitalize;
+}
+
+/* ============================================
+   CONTENT BODY
+   ============================================ */
 .content-body {
     padding: 32px;
 }
@@ -63,16 +109,9 @@ header {
     margin-top: 4px;
 }
 
-.badge {
-    padding: 4px 10px;
-    background: #dbeafe;
-    color: #1e40af;
-    border-radius: 99px;
-    font-size: 12px;
-    font-weight: 500;
-    text-transform: capitalize;
-}
-
+/* ============================================
+   SUMMARY CARDS
+   ============================================ */
 .summary-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -113,6 +152,9 @@ header {
     font-style: italic;
 }
 
+/* ============================================
+   TABLE
+   ============================================ */
 .table-container {
     background: #fff;
     border-radius: 12px;
@@ -141,7 +183,68 @@ header {
     color: var(--text-muted);
 }
 
-/* ===== EXPORT BUTTON STYLES ===== */
+.table-scroll {
+    overflow-x: auto;
+    padding: 0 4px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    min-width: 1000px;
+}
+
+thead {
+    background: #f8fafc;
+    border-bottom: 2px solid #e2e8f0;
+}
+
+thead th {
+    padding: 12px 16px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    background: #f8fafc;
+    z-index: 10;
+}
+
+tbody td {
+    padding: 12px 16px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+tbody tr:hover {
+    background: #f8fafc;
+}
+
+tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+
+.font-mono {
+    font-family: 'Courier New', monospace;
+    font-weight: 500;
+}
+
+.amount {
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+/* ============================================
+   EXPORT BUTTON STYLES
+   ============================================ */
 .table-header-actions {
     display: flex;
     align-items: center;
@@ -275,108 +378,9 @@ header {
     height: 20px;
 }
 
-/* Responsive Export Button */
-@media (max-width: 768px) {
-    .table-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 10px;
-    }
-    
-    .table-header-actions {
-        width: 100%;
-        justify-content: space-between;
-    }
-    
-    .export-btn {
-        width: 100%;
-        justify-content: center;
-        padding: 10px;
-    }
-
-    .export-btn-top {
-        width: 100%;
-        justify-content: center;
-    }
-
-    .export-float-btn {
-        bottom: 20px;
-        right: 20px;
-        width: 48px;
-        height: 48px;
-    }
-
-    .export-float-btn i {
-        width: 20px;
-        height: 20px;
-    }
-}
-/* ===== END EXPORT BUTTON STYLES ===== */
-
-.table-scroll {
-    overflow-x: auto;
-    padding: 0 4px;
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 14px;
-    min-width: 1000px;
-}
-
-thead {
-    background: #f8fafc;
-    border-bottom: 2px solid #e2e8f0;
-}
-
-thead th {
-    padding: 12px 16px;
-    text-align: left;
-    font-weight: 600;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-muted);
-    white-space: nowrap;
-    position: sticky;
-    top: 0;
-    background: #f8fafc;
-    z-index: 10;
-}
-
-tbody td {
-    padding: 12px 16px;
-    border-bottom: 1px solid #f1f5f9;
-    vertical-align: middle;
-}
-
-tbody tr:hover {
-    background: #f8fafc;
-}
-
-tbody tr:last-child td {
-    border-bottom: none;
-}
-
-.text-right {
-    text-align: right;
-}
-
-.text-center {
-    text-align: center;
-}
-
-.font-mono {
-    font-family: 'Courier New', monospace;
-    font-weight: 500;
-}
-
-.amount {
-    font-weight: 600;
-    color: var(--text-main);
-}
-
+/* ============================================
+   STATUS & AGING BADGES
+   ============================================ */
 .status-badge {
     display: inline-block;
     padding: 2px 10px;
@@ -385,35 +389,12 @@ tbody tr:last-child td {
     font-weight: 500;
 }
 
-.status-paid {
-    background: #d1fae5;
-    color: #065f46;
-}
-
-.status-unpaid {
-    background: #fef3c7;
-    color: #92400e;
-}
-
-.status-partial {
-    background: #dbeafe;
-    color: #1e40af;
-}
-
-.status-overdue {
-    background: #fecaca;
-    color: #991b1b;
-}
-
-.status-pending {
-    background: #fef3c7;
-    color: #92400e;
-}
-
-.status-active {
-    background: #dbeafe;
-    color: #1e40af;
-}
+.status-paid { background: #d1fae5; color: #065f46; }
+.status-unpaid { background: #fef3c7; color: #92400e; }
+.status-partial { background: #dbeafe; color: #1e40af; }
+.status-overdue { background: #fecaca; color: #991b1b; }
+.status-pending { background: #fef3c7; color: #92400e; }
+.status-active { background: #dbeafe; color: #1e40af; }
 
 .aging-badge {
     display: inline-block;
@@ -438,16 +419,13 @@ tbody tr:last-child td {
     font-weight: 600;
 }
 
-.overdue-yes {
-    background: #fecaca;
-    color: #991b1b;
-}
+.overdue-yes { background: #fecaca; color: #991b1b; }
+.overdue-no { background: #d1fae5; color: #065f46; }
+.overdue-pending { background: #fef3c7; color: #92400e; }
 
-.overdue-no {
-    background: #d1fae5;
-    color: #065f46;
-}
-
+/* ============================================
+   TABLE FOOTER & EMPTY STATE
+   ============================================ */
 .table-footer {
     padding: 16px 20px;
     background: #f8fafc;
@@ -481,22 +459,289 @@ tbody tr:last-child td {
     font-size: 14px;
 }
 
+/* ============================================
+   FLASH MESSAGE
+   ============================================ */
+#flash-message {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background-color: #10b981;
+    color: white;
+    padding: 16px 24px;
+    border-radius: 8px;
+    z-index: 1000;
+    transition: opacity 0.5s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* ============================================
+   FORCE PASSWORD CHANGE MODAL
+   ============================================ */
+.force-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+}
+
+.force-modal {
+    background: white;
+    width: 100%;
+    max-width: 420px;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.force-modal h2 {
+    margin-top: 0;
+    color: #ef4444;
+    font-size: 20px;
+    margin-bottom: 12px;
+}
+
+.force-modal p {
+    color: #64748b;
+    font-size: 14px;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+.force-form-group {
+    margin-bottom: 16px;
+    text-align: left;
+}
+
+.force-form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 6px;
+}
+
+.force-form-group input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.force-form-group input:focus {
+    outline: none;
+    border-color: #2563eb;
+}
+
+.force-btn {
+    width: 100%;
+    background: #2563eb;
+    color: white;
+    padding: 12px;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.force-btn:hover {
+    background: #1d4ed8;
+}
+
+.pwd-req {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 6px;
+    display: block;
+}
+
+.alert-box {
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.alert-err {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.modal-actions .force-btn {
+    flex: 1;
+}
+
+.modal-actions .dismiss-btn {
+    flex: 0 0 auto;
+    background: #e2e8f0;
+    color: #475569;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.modal-actions .dismiss-btn:hover {
+    background: #cbd5e1;
+}
+
+/* ============================================
+   ACCESS DENIED MODAL
+   ============================================ */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.95);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+}
+
+.access-modal {
+    background: white;
+    width: 100%;
+    max-width: 380px;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    animation: modalSlideIn 0.3s ease;
+}
+
+.access-modal i {
+    width: 56px;
+    height: 56px;
+    color: #ef4444;
+    margin-bottom: 16px;
+}
+
+.access-modal h3 {
+    margin: 0 0 8px 0;
+    color: #1e293b;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.access-modal p {
+    color: #64748b;
+    font-size: 14px;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+.modal-btn {
+    background: #2563eb;
+    color: white;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+    min-width: 120px;
+}
+
+.modal-btn:hover {
+    background: #1d4ed8;
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
 @media (max-width: 768px) {
-    .summary-cards {
-        grid-template-columns: 1fr 1fr;
+    .main-content {
+        margin-left: 70px;
     }
-    .content-body {
-        padding: 16px;
-    }
+
     header {
         padding: 0 16px;
     }
+
+    .content-body {
+        padding: 16px;
+    }
+
+    .summary-cards {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .welcome-section h1 {
+        font-size: 20px;
+    }
+
     table {
         font-size: 13px;
         min-width: 700px;
     }
+
     thead th, tbody td {
         padding: 8px 12px;
+    }
+
+    /* Export button responsive */
+    .table-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .table-header-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .export-btn {
+        width: 100%;
+        justify-content: center;
+        padding: 10px;
+    }
+
+    .export-btn-top {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .export-float-btn {
+        bottom: 20px;
+        right: 20px;
+        width: 48px;
+        height: 48px;
+    }
+
+    .export-float-btn i {
+        width: 20px;
+        height: 20px;
     }
 }
 

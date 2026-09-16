@@ -100,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
     $errors = [];
     if (empty($first_name)) $errors[] = "First name is required.";
     if (empty($last_name)) $errors[] = "Last name is required.";
-    if (empty($email)) $errors[] = "Email is required.";
     if (empty($position)) $errors[] = "Position is required.";
     if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $errors[] = "Invalid email format.";
@@ -170,10 +169,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
     $full_name = preg_replace('/\s+/', ' ', $full_name);
     
     $errors = [];
-    if (empty($employee_code)) $errors[] = "Employee Code is required.";
+    if (empty($employee_code)) $errors[] = "Employee ID is required.";
     if (empty($first_name)) $errors[] = "First name is required.";
     if (empty($last_name)) $errors[] = "Last name is required.";
-    if (empty($email)) $errors[] = "Email is required.";
     if (empty($position)) $errors[] = "Position is required.";
     if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $errors[] = "Invalid email format.";
@@ -185,7 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
         $stmt->bind_param("si", $employee_code, $edit_employee_id);
         $stmt->execute();
         if ($stmt->get_result()->num_rows > 0) {
-            $errors[] = "Employee Code already exists for another employee.";
+            $errors[] = "Employee ID already exists for another employee.";
         }
         $stmt->close();
     }
@@ -226,29 +224,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
             'type' => 'error'
         ];
     }
-}
-
-// Handle Delete Employee
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_employee'])) {
-    $delete_employee_id = $_POST['employee_id'];
-    
-    $stmt = $conn->prepare("DELETE FROM employee_list WHERE id = ?");
-    $stmt->bind_param("i", $delete_employee_id);
-    
-    if ($stmt->execute()) {
-        $_SESSION['flash_message'] = [
-            'text' => "Employee deleted successfully!",
-            'type' => 'success'
-        ];
-    } else {
-        $_SESSION['flash_message'] = [
-            'text' => "Database error: " . $conn->error,
-            'type' => 'error'
-        ];
-    }
-    $stmt->close();
-    header("Location: employee_list.php");
-    exit;
 }
 
 // Get search term from GET
@@ -412,7 +387,7 @@ $common_positions = [
             <table>
                 <thead>
                     <tr>
-                        <th>Employee Code</th>
+                        <th>Employee ID</th>
                         <th>Full Name</th>
                         <th>Email</th>
                         <th>Department</th>
@@ -450,9 +425,13 @@ $common_positions = [
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="mailto:<?php echo htmlspecialchars($e['email']); ?>" style="color: var(--accent-blue); text-decoration: none; font-size: 13px;">
-                                        <?php echo htmlspecialchars($e['email']); ?>
-                                    </a>
+                                    <?php if (!empty($e['email'])): ?>
+                                        <a href="mailto:<?php echo htmlspecialchars($e['email']); ?>" style="color: var(--accent-blue); text-decoration: none; font-size: 13px;">
+                                            <?php echo htmlspecialchars($e['email']); ?>
+                                        </a>
+                                    <?php else: ?>
+                                        <span style="color: var(--text-muted); font-size: 13px;">—</span>
+                                    <?php endif; ?>
                                     <?php if (!empty($e['contact_number'])): ?>
                                         <div style="font-size: 11px; color: var(--text-muted);"><?php echo htmlspecialchars($e['contact_number']); ?></div>
                                     <?php endif; ?>
@@ -497,7 +476,7 @@ $common_positions = [
             <div class="modal-body">
                 <div class="form-grid">
                     <div class="form-group col-3">
-                        <label for="add_employee_code">Employee Code</label>
+                        <label for="add_employee_code">Employee ID</label>
                         <div class="code-input-wrapper">
                             <input type="text" id="add_employee_code" name="employee_code" 
                                    value="<?php echo $next_employee_code; ?>" 
@@ -539,8 +518,8 @@ $common_positions = [
                     </div>
 
                     <div class="form-group col-3">
-                        <label for="add_email">Email *</label>
-                        <input type="email" id="add_email" name="email" required>
+                        <label for="add_email">Email</label>
+                        <input type="email" id="add_email" name="email">
                     </div>
 
                     <div class="form-group col-3">
@@ -616,7 +595,7 @@ $common_positions = [
             <div class="modal-body">
                 <div class="form-grid">
                     <div class="form-group col-3">
-                        <label for="edit_employee_code">Employee Code *</label>
+                        <label for="edit_employee_code">Employee ID *</label>
                         <input type="text" id="edit_employee_code" name="employee_code" required 
                                style="text-transform: uppercase; font-weight:600; color:var(--accent-blue); background:#f8fafc;">
                     </div>
@@ -651,8 +630,8 @@ $common_positions = [
                     </div>
 
                     <div class="form-group col-3">
-                        <label for="edit_email">Email *</label>
-                        <input type="email" id="edit_email" name="email" required>
+                        <label for="edit_email">Email</label>
+                        <input type="email" id="edit_email" name="email">
                     </div>
 
                     <div class="form-group col-3">
@@ -737,24 +716,9 @@ $common_positions = [
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-danger" id="deleteEmployeeBtn">Delete Employee</button>
                 <button type="button" class="btn btn-secondary" id="cancelEditModal">Cancel</button>
                 <button type="submit" name="edit_employee" class="btn btn-primary">Save Changes</button>
             </div>
-        </form>
-    </div>
-</div>
-
-<!-- Delete Confirmation Modal -->
-<div class="modal-overlay" id="deleteConfirmModal">
-    <div class="access-modal" style="max-width: 400px;">
-        <i data-lucide="alert-triangle" style="color: #dc2626; width: 48px; height: 48px;"></i>
-        <h3>Confirm Delete</h3>
-        <p>Are you sure you want to delete this employee? This action cannot be undone.</p>
-        <form method="POST" id="deleteEmployeeForm" style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
-            <input type="hidden" name="employee_id" id="delete_employee_id">
-            <button type="button" class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
-            <button type="submit" name="delete_employee" class="btn btn-danger">Delete Employee</button>
         </form>
     </div>
 </div>
@@ -854,6 +818,7 @@ $common_positions = [
     const openAddBtn = document.getElementById('openAddModal');
     const closeAddBtn = document.getElementById('closeAddModal');
     const cancelAddBtn = document.getElementById('cancelAddModal');
+    const addEmployeeForm = document.getElementById('addEmployeeForm');
 
     function openAddEmployeeModal() { 
         addModal.style.display = 'flex';
@@ -869,15 +834,69 @@ $common_positions = [
                 // Fallback: use the PHP-generated value already in the input
             });
     }
-    
-    function closeAddEmployeeModal() { addModal.style.display = 'none'; }
+
+    // Check if any field in the add form has a value (excluding the auto-generated employee code)
+    function isAddFormDirty() {
+        const fields = [
+            'add_first_name',
+            'add_middle_name',
+            'add_last_name',
+            'add_suffix',
+            'add_email',
+            'add_contact_number',
+            'add_department',
+            'add_position',
+            'add_location',
+            'add_status',
+            'add_date_hired',
+            'add_date_separated',
+            'add_notes'
+        ];
+        for (const id of fields) {
+            const el = document.getElementById(id);
+            if (!el) continue;
+            if (el.tagName === 'SELECT') {
+                // Status has a default value 'active', so treat it as dirty only if non-default
+                if (id === 'add_status') {
+                    if (el.value && el.value !== 'active') return true;
+                } else if (el.value) {
+                    return true;
+                }
+            } else if (el.value && el.value.trim() !== '') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function resetAddForm() {
+        addEmployeeForm.reset();
+        const fullNameInput = document.getElementById('add_full_name');
+        if (fullNameInput) fullNameInput.value = '';
+    }
+
+    function closeAddEmployeeModal(skipConfirm = false) {
+        if (!skipConfirm && isAddFormDirty()) {
+            const confirmDiscard = confirm("You have unsaved employee data. Are you sure you want to cancel adding this employee?\n\nClick OK to discard and close, or Cancel to keep editing.");
+            if (!confirmDiscard) {
+                return; // Keep the modal open
+            }
+        }
+        resetAddForm();
+        addModal.style.display = 'none';
+    }
 
     openAddBtn?.addEventListener('click', openAddEmployeeModal);
-    closeAddBtn?.addEventListener('click', closeAddEmployeeModal);
-    cancelAddBtn?.addEventListener('click', closeAddEmployeeModal);
+    closeAddBtn?.addEventListener('click', () => closeAddEmployeeModal());
+    cancelAddBtn?.addEventListener('click', () => closeAddEmployeeModal());
 
     addModal?.addEventListener('click', (e) => {
         if (e.target === addModal) closeAddEmployeeModal();
+    });
+
+    // Reset form when the modal is opened fresh
+    openAddBtn?.addEventListener('click', function() {
+        resetAddForm();
     });
 
     // Auto-generate full name for Add Modal
@@ -910,9 +929,6 @@ $common_positions = [
     const closeEditBtn = document.getElementById('closeEditModal');
     const cancelEditBtn = document.getElementById('cancelEditModal');
     const editEmployeeForm = document.getElementById('editEmployeeForm');
-    const deleteEmployeeBtn = document.getElementById('deleteEmployeeBtn');
-    const deleteConfirmModal = document.getElementById('deleteConfirmModal');
-    const deleteEmployeeId = document.getElementById('delete_employee_id');
 
     // Edit Modal fields
     const editEmployeeId = document.getElementById('edit_employee_id');
@@ -1000,28 +1016,11 @@ $common_positions = [
         if (e.target === editModal) closeEditModal();
     });
 
-    // ── Delete Employee ──────────────────────────────────────────
-    deleteEmployeeBtn?.addEventListener('click', function() {
-        const employeeId = editEmployeeId.value;
-        deleteEmployeeId.value = employeeId;
-        closeEditModal();
-        deleteConfirmModal.style.display = 'flex';
-    });
-
-    function closeDeleteModal() {
-        deleteConfirmModal.style.display = 'none';
-    }
-
-    deleteConfirmModal?.addEventListener('click', (e) => {
-        if (e.target === deleteConfirmModal) closeDeleteModal();
-    });
-
     // ── Escape key closes all modals ────────────────────────────
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             if (addModal?.style.display === 'flex') closeAddEmployeeModal();
             if (editModal?.style.display === 'flex') closeEditModal();
-            if (deleteConfirmModal?.style.display === 'flex') closeDeleteModal();
             if (modal?.style.display === 'flex') closeModal();
         }
     });

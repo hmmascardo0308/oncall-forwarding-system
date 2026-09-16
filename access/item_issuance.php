@@ -279,7 +279,7 @@ $issuances_result = mysqli_query($conn, $issuances_query);
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <link rel="stylesheet" href="css/items.css?v=<?= time(); ?>">
+    <!-- <link rel="stylesheet" href="css/items.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/items_issue.css?v=<?= time(); ?>">
 
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">

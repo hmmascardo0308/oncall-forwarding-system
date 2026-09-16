@@ -270,7 +270,7 @@ function getDeliveryPaymentBadgeClass($payment) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <link rel="stylesheet" href="css/purchase_order.css?v=<?= time(); ?>">
+    <!-- <link rel="stylesheet" href="css/purchase_order.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/po_all.css?v=<?= time(); ?>">
 
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
@@ -412,7 +412,7 @@ function getDeliveryPaymentBadgeClass($payment) {
 
             <?php if (count($purchase_orders) > 0): ?>
       <div class="table-wrapper">
-    <table id="poTable">
+            <table id="poTable">
         <thead>
             <tr>
                 <th>PO Number</th>
@@ -442,12 +442,12 @@ function getDeliveryPaymentBadgeClass($payment) {
                             <?php echo htmlspecialchars($po['supplier_code']); ?>
                         </div>
                     </td>
-                    <td><?php echo date('M d, Y', strtotime($po['po_date'])); ?></td>
+                    <td><?php echo date('m/d/Y', strtotime($po['po_date'])); ?></td>
                     <td>
-                        <?php echo $po['expected_delivery'] ? date('M d, Y', strtotime($po['expected_delivery'])) : '—'; ?>
+                        <?php echo $po['expected_delivery'] ? date('m/d/Y', strtotime($po['expected_delivery'])) : '—'; ?>
                     </td>
-                    <td style="font-weight: 600;">
-                        ₱<?php echo number_format($po['total_amount_paid'], 2); ?>
+                    <td style="font-weight: 600; text-align: right;">
+                        ₱ <?php echo number_format($po['total_amount_paid'], 2); ?>
                     </td>
                     <td>
                         <span class="<?php echo getStatusBadgeClass($po['status']); ?>">
@@ -465,7 +465,7 @@ function getDeliveryPaymentBadgeClass($payment) {
                         </span>
                     </td>
                     <td>
-                        <?php echo $po['delivered_date'] ? date('M d, Y', strtotime($po['delivered_date'])) : '—'; ?>
+                        <?php echo $po['delivered_date'] ? date('m/d/Y', strtotime($po['delivered_date'])) : '—'; ?>
                     </td>
                     <td>
                         <span class="received-by-text">
@@ -473,7 +473,7 @@ function getDeliveryPaymentBadgeClass($payment) {
                         </span>
                     </td>
                     <td><?php echo htmlspecialchars($po['created_by']); ?></td>
-                    <td><?php echo date('M d, Y h:i A', strtotime($po['created_at'])); ?></td>
+                    <td><?php echo date('m/d/Y', strtotime($po['created_at'])); ?></td>
                     <td>
                         <a href="purchase_orders_view.php?po_number=<?php echo urlencode($po['po_number']); ?>" 
                            class="btn-secondary" 

@@ -352,95 +352,7 @@ $result = mysqli_query($conn, $query);
     <link rel="stylesheet" href="css/items.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     
-    <style>
-        /* Alert message with close button */
-        .alert {
-            position: relative;
-            padding: 14px 45px 14px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            animation: slideDown 0.3s ease;
-        }
-        
-        .alert-success {
-            background: #dcfce7;
-            color: #166534;
-            border: 1px solid #86efac;
-        }
-        
-        .alert-error {
-            background: #fee2e2;
-            color: #991b1b;
-            border: 1px solid #fca5a5;
-        }
-        
-        .alert .alert-content {
-            flex: 1;
-        }
-        
-        .alert .alert-close {
-            background: transparent;
-            border: none;
-            font-size: 22px;
-            cursor: pointer;
-            color: inherit;
-            padding: 0 5px;
-            line-height: 1;
-            opacity: 0.6;
-            transition: opacity 0.2s;
-            flex-shrink: 0;
-        }
-        
-        .alert .alert-close:hover {
-            opacity: 1;
-        }
-        
-        .alert .alert-timer {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            height: 3px;
-            background: currentColor;
-            opacity: 0.3;
-            border-radius: 0 0 8px 8px;
-            animation: timerShrink 3s linear forwards;
-        }
-        
-        @keyframes slideDown {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        @keyframes timerShrink {
-            from { width: 100%; }
-            to { width: 0%; }
-        }
-        
-        .alert.fade-out {
-            animation: fadeOut 0.5s ease forwards;
-        }
-        
-        @keyframes fadeOut {
-            from {
-                opacity: 1;
-                transform: translateY(0);
-            }
-            to {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-        }
-    </style>
+  
 </head>
 <body>
 
@@ -551,12 +463,8 @@ $result = mysqli_query($conn, $query);
                     <?php if (mysqli_num_rows($result) > 0): ?>
                         <?php while ($row = mysqli_fetch_assoc($result)): ?>
                             <?php 
-                                $stockClass = 'stock-normal';
-                                $stockLabel = 'Normal';
-                                if ($row['current_stock'] <= $row['reorder_point']) {
-                                    $stockClass = 'stock-low';
-                                    $stockLabel = 'Low Stock';
-                                }
+                                // Stock styling: black for normal numbers, red if 0
+                                $stockClass = ($row['current_stock'] == 0) ? 'stock-zero' : 'stock-normal';
                             ?>
                             <tr data-item-id="<?php echo $row['id']; ?>">
                                 <td style="font-weight:600; color:var(--accent-blue);"><?php echo htmlspecialchars($row['item_code']); ?></td>
@@ -574,7 +482,7 @@ $result = mysqli_query($conn, $query);
                                         <?php echo number_format($row['current_stock']); ?> <?php echo htmlspecialchars($row['unit_of_measure']); ?>
                                     </span>
                                 </td>
-                                <td style="font-weight:500;">₱<?php echo number_format($row['selling_price'], 2); ?></td>
+                                <td style="font-weight:500; text-align: right;">₱ <?php echo number_format($row['selling_price'], 2); ?></td>
                                 <td>
                                     <?php $statusClass = ($row['status'] == 1) ? 'status-active' : 'status-inactive'; ?>
                                     <span class="status-pill <?php echo $statusClass; ?>">

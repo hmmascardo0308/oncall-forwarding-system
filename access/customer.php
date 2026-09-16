@@ -151,6 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_customer'])) {
         'payment_terms'     => trim($_POST['payment_terms'] ?? ''),
         'notes'             => trim($_POST['notes'] ?? ''),
         'full_address'      => trim($_POST['full_address'] ?? ''),
+        'with_special_process' => isset($_POST['with_special_process']) ? 1 : 0,
     ];
 
     // Apply uppercase transformation to text fields (email to lowercase)
@@ -202,25 +203,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_customer'])) {
                 street, barangay, town_municipality, province, 
                 postal_code, country, full_address,
                 id_type, id_number, status, customer_since, 
-                loyalty_tier, payment_terms, notes, created_at, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                loyalty_tier, payment_terms, notes, with_special_process, created_at, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ";
 
         $stmt = mysqli_prepare($conn, $insert_query);
-       mysqli_stmt_bind_param(
-    $stmt, "ssssssssssssssssssssssssssss",   // 28 × 's'
-    $fields['customer_code'],
-    $fields['customer_type'], $fields['company_name'], $fields['tin'],
-    $fields['first_name'], $fields['middle_name'], $fields['last_name'], $fields['full_name'],
-    $fields['contact_person'], $fields['position'], $fields['contact_number'], $fields['email'],
-    $fields['street'], $fields['barangay'], $fields['town_municipality'],
-    $fields['province'], $fields['postal_code'], $fields['country'],
-    $fields['full_address'],
-    $fields['id_type'], $fields['id_number'],
-    $fields['status'], $fields['customer_since'],
-    $fields['loyalty_tier'], $fields['payment_terms'], $fields['notes'],
-    $created_at, $created_by
-);
+        mysqli_stmt_bind_param(
+            $stmt, "ssssssssssssssssssssssssssssi",   // 28 's' + 1 'i'
+            $fields['customer_code'],
+            $fields['customer_type'], $fields['company_name'], $fields['tin'],
+            $fields['first_name'], $fields['middle_name'], $fields['last_name'], $fields['full_name'],
+            $fields['contact_person'], $fields['position'], $fields['contact_number'], $fields['email'],
+            $fields['street'], $fields['barangay'], $fields['town_municipality'],
+            $fields['province'], $fields['postal_code'], $fields['country'],
+            $fields['full_address'],
+            $fields['id_type'], $fields['id_number'],
+            $fields['status'], $fields['customer_since'],
+            $fields['loyalty_tier'], $fields['payment_terms'], $fields['notes'],
+            $fields['with_special_process'],
+            $created_at, $created_by
+        );
 
         if (mysqli_stmt_execute($stmt)) {
             $_SESSION['message'] = "Customer added successfully!";
@@ -276,6 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_customer'])) {
         'payment_terms'     => trim($_POST['payment_terms'] ?? ''),
         'notes'             => trim($_POST['notes'] ?? ''),
         'full_address'      => trim($_POST['full_address'] ?? ''),
+        'with_special_process' => isset($_POST['with_special_process']) ? 1 : 0,
     ];
 
     // Apply uppercase transformation to text fields (email to lowercase)
@@ -324,24 +327,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_customer'])) {
                 street = ?, barangay = ?, town_municipality = ?, province = ?,
                 postal_code = ?, country = ?, full_address = ?,
                 id_type = ?, id_number = ?, status = ?, customer_since = ?,
-                loyalty_tier = ?, payment_terms = ?, notes = ?
+                loyalty_tier = ?, payment_terms = ?, notes = ?, with_special_process = ?
             WHERE id = ?
         ";
 
         $stmt = mysqli_prepare($conn, $update_query);
-        mysqli_stmt_bind_param(
-            $stmt, "ssssssssssssssssssssssssssi",
-            $fields['customer_type'], $fields['company_name'], $fields['tin'],
-            $fields['first_name'], $fields['middle_name'], $fields['last_name'], $fields['full_name'],
-            $fields['contact_person'], $fields['position'], $fields['contact_number'], $fields['email'],
-            $fields['street'], $fields['barangay'], $fields['town_municipality'],
-            $fields['province'], $fields['postal_code'], $fields['country'],
-            $fields['full_address'],
-            $fields['id_type'], $fields['id_number'],
-            $fields['status'], $fields['customer_since'],
-            $fields['loyalty_tier'], $fields['payment_terms'], $fields['notes'],
-            $customer_id
-        );
+
+mysqli_stmt_bind_param(
+    $stmt, "ssssssssssssssssssssssssssi", // 26 's' + 1 'i'
+    $fields['customer_type'],
+    $fields['company_name'],
+    $fields['tin'],
+    $fields['first_name'],
+    $fields['middle_name'],
+    $fields['last_name'],
+    $fields['full_name'],
+    $fields['contact_person'],
+    $fields['position'],
+    $fields['contact_number'],
+    $fields['email'],
+    $fields['street'],
+    $fields['barangay'],
+    $fields['town_municipality'],
+    $fields['province'],
+    $fields['postal_code'],
+    $fields['country'],
+    $fields['full_address'],
+    $fields['id_type'],
+    $fields['id_number'],
+    $fields['status'],
+    $fields['customer_since'],
+    $fields['loyalty_tier'],
+    $fields['payment_terms'],
+    $fields['notes'],
+    $fields['with_special_process'],
+    $customer_id
+);
 
         if (mysqli_stmt_execute($stmt)) {
             $_SESSION['message'] = "Customer updated successfully!";
@@ -484,6 +505,7 @@ $result = mysqli_query($conn, $query);
                         <th>Location</th>
                         <th>Terms</th>
                         <th>Status</th>
+                        <th>Special Process</th>
                         <th>Action</th>
                      </tr>
                 </thead>
@@ -521,6 +543,16 @@ $result = mysqli_query($conn, $query);
                                     </span>
                                  </td>
                                 <td>
+                                    <?php if (!empty($row['with_special_process']) && $row['with_special_process'] == 1): ?>
+                                        <span class="status-pill" style="background:#bdeaff; color:#071f33; border:1px solid #207fab; display:inline-flex; align-items:center; gap:4px;">
+                                            <i data-lucide="alert-triangle" style="width:12px; height:12px;"></i>
+                                            YES
+                                        </span>
+                                    <?php else: ?>
+                                        <span style="color:var(--text-muted);">—</span>
+                                    <?php endif; ?>
+                                 </td>
+                                <td>
                                     <?php if ($can_manage_customer): ?>
                                         <button class="action-btn edit-btn" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($row)); ?>)" title="Edit Customer">
                                             <i data-lucide="edit-2" style="width:18px;"></i> View / Edit
@@ -535,7 +567,7 @@ $result = mysqli_query($conn, $query);
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="8" style="text-align:center; padding:60px 20px; color:var(--text-muted);">
+                            <td colspan="9" style="text-align:center; padding:60px 20px; color:var(--text-muted);">
                                 <?php if (!empty($search_term)): ?>
                                     No customers found matching "<strong><?php echo htmlspecialchars($search_term); ?></strong>"
                                     <br>
@@ -755,6 +787,15 @@ $result = mysqli_query($conn, $query);
                     <div class="col-span-12">
                         <label>Internal Notes</label>
                         <textarea name="notes" rows="3" placeholder="Special instructions, remarks, preferences..."></textarea>
+                    </div>
+
+                    <!-- WITH SPECIAL PROCESS CHECKBOX -->
+                    <div class="col-span-12" style="display:flex; align-items:center; gap:12px; padding:12px 16px; background:#bdeaff; border:1px solid #207fab; border-radius:8px; margin-top:8px;">
+                        <input type="checkbox" name="with_special_process" id="with_special_process" value="1" style="width:18px; height:18px; cursor:pointer;">
+                        <label for="with_special_process" style="margin:0; cursor:pointer; font-size:14px; font-weight:500; color:#071f33; display:flex; align-items:center; gap:6px;">
+                            <i data-lucide="alert-triangle" style="width:16px; height:16px;"></i>
+                            With Special Process
+                        </label>
                     </div>
 
                 </div>
@@ -977,6 +1018,15 @@ $result = mysqli_query($conn, $query);
                     <div class="col-span-12">
                         <label>Internal Notes</label>
                         <textarea name="notes" id="edit_notes" rows="3" placeholder="Special instructions, remarks, preferences..."></textarea>
+                    </div>
+
+                    <!-- WITH SPECIAL PROCESS CHECKBOX (Edit) -->
+                    <div class="col-span-12" style="display:flex; align-items:center; gap:12px; padding:12px 16px; background:#bdeaff; border:1px solid #207fab; border-radius:8px; margin-top:8px;">
+                        <input type="checkbox" name="with_special_process" id="edit_with_special_process" value="1" style="width:18px; height:18px; cursor:pointer;">
+                        <label for="edit_with_special_process" style="margin:0; cursor:pointer; font-size:14px; font-weight:500; color:#071f33; display:flex; align-items:center; gap:6px;">
+                            <i data-lucide="alert-triangle" style="width:16px; height:16px;"></i>
+                            With Special Process
+                        </label>
                     </div>
 
                 </div>
@@ -1261,10 +1311,18 @@ function setEditFormReadonly(isReadonly) {
             if (input.tagName === 'SELECT') {
                 input.disabled = true;
             }
+            // Disable checkboxes in view mode
+            if (input.type === 'checkbox') {
+                input.disabled = true;
+            }
         } else {
             input.removeAttribute('readonly');
             input.removeAttribute('disabled');
             if (input.tagName === 'SELECT') {
+                input.disabled = false;
+            }
+            // Re-enable checkboxes in edit mode
+            if (input.type === 'checkbox') {
                 input.disabled = false;
             }
         }
@@ -1355,6 +1413,9 @@ function populateEditForm(customerData) {
     document.getElementById('edit_loyalty_tier').value = customerData.loyalty_tier || 'Standard';
     document.getElementById('edit_payment_terms').value = customerData.payment_terms || '';
     document.getElementById('edit_notes').value = customerData.notes || '';
+    
+    // Special Process checkbox
+    document.getElementById('edit_with_special_process').checked = customerData.with_special_process == 1;
     
     // Toggle the appropriate fields based on customer type
     toggleEditCustomerType();

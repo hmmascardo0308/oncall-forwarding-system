@@ -1,297 +1,910 @@
-        .view-only-badge {
-            background: #dbeafe;
-            color: #1e40af;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
+/* po_view.css - Consolidated styles for Purchase Order View page */
+
+:root {
+    --sidebar-width: 260px;
+    --primary-bg: #f8fafc;
+    --sidebar-dark: #0f172a;
+    --accent-blue: #2563eb;
+    --accent-orange: #ea580c;
+    --text-main: #1e293b;
+    --text-muted: #64748b;
+    --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    --modal-bg: rgba(0, 0, 0, 0.6);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: 'Inter', sans-serif;
+    background: var(--primary-bg);
+    color: var(--text-main);
+    display: flex;
+}
+
+/* ============================================
+   MAIN CONTENT AREA
+   ============================================ */
+.main-content {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    min-height: 100vh;
+    background-image: url('../../images/company logo.png');
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    position: relative;
+}
+
+.main-content::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(248, 250, 252, 0.9);
+    z-index: 0;
+}
+
+.main-content > * {
+    position: relative;
+    z-index: 1;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+header {
+    background: #fff;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 32px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.breadcrumb {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.user-profile {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.badge {
+    padding: 4px 10px;
+    background: #dbeafe;
+    color: #1e40af;
+    border-radius: 99px;
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: capitalize;
+}
+
+/* ============================================
+   CONTENT BODY
+   ============================================ */
+.content-body {
+    padding: 32px;
+}
+
+/* ============================================
+   PAGE HEADER
+   ============================================ */
+.page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.page-header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.page-header h1 .icon-wrap {
+    width: 36px;
+    height: 36px;
+    background: #ffedd5;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-orange);
+}
+
+.page-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* ============================================
+   BUTTONS
+   ============================================ */
+.btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--accent-orange);
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+
+.btn-primary:hover {
+    background: #c2410c;
+}
+
+.btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #fff;
+    color: var(--text-main);
+    border: 1px solid #e2e8f0;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: #f1f5f9;
+}
+
+.back-btn {
+    background: white;
+    border: 1px solid #e2e8f0;
+    color: #1f2937;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.back-btn:hover {
+    background: #f9fafb;
+    border-color: #cbd5e1;
+}
+
+.view-orders-btn {
+    background: rgb(0, 101, 119);
+    border: 1px solid #e2e8f0;
+    color: #ffffff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.view-orders-btn:hover {
+    background: #006577;
+    border-color: #00232a;
+}
+
+.print-btn {
+    background: #1f2937;
+    border: none;
+    color: white !important;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.print-btn:hover {
+    background: #374151;
+}
+
+.print-btn.is-reprint {
+    background: #4338ca;
+}
+
+.print-btn.is-reprint:hover {
+    background: #3730a3;
+}
+
+/* ============================================
+   VIEW-ONLY BADGE
+   ============================================ */
+.view-only-badge {
+    background: #dbeafe;
+    color: #1e40af;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* ============================================
+   PRINT STATUS BADGE
+   ============================================ */
+.print-status-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 8px;
+}
+
+.print-status-badge.printed {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.print-status-badge.unprinted {
+    background: #f3f4f6;
+    color: #6b7280;
+}
+
+/* ============================================
+   FORM CARD
+   ============================================ */
+.form-card {
+    background: rgba(255, 255, 255, 0.7);
+    border-radius: 12px;
+    box-shadow: var(--card-shadow);
+    border: 1px solid #f1f5f9;
+    padding: 28px;
+    margin-bottom: 24px;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+}
+
+.form-card-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: black;
+    margin: 0 0 20px 0;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.form-card-title i {
+    color: var(--accent-orange);
+}
+
+/* ============================================
+   PO HEADER INFO GRID
+   ============================================ */
+.po-header-info {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+    padding: 16px;
+    background: #f8fafc;
+    border-radius: 8px;
+}
+
+.po-header-info .info-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.po-header-info .info-item .label {
+    font-size: 12px;
+    color: black;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.po-header-info .info-item .value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #0900ab;
+    margin-top: 4px;
+}
+
+/* ============================================
+   PO TAG
+   ============================================ */
+.po-tag {
+    background: #ffe6c7;
+    border: 1px solid #fdba74;
+    color: #742607;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+}
+
+/* ============================================
+   STATUS BADGES
+   ============================================ */
+.status-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+.status-badge.created { background: #fef3c7; color: #92400e; }
+.status-badge.approved { background: #d1fae5; color: #065f46; }
+.status-badge.received { background: #dbeafe; color: #1e40af; }
+.status-badge.completed { background: #d1fae5; color: #065f46; }
+.status-badge.cancelled {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fca5a5;
+}
+
+/* ============================================
+   FORM GROUP
+   ============================================ */
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group.full-width {
+    grid-column: 1 / -1;
+}
+
+label {
+    font-size: 15px;
+    font-weight: 800;
+    color: black;
+}
+
+input,
+select,
+textarea {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: var(--text-main);
+    outline: none;
+    transition: border 0.2s, box-shadow 0.2s;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--accent-orange);
+    box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.08);
+    background: #fff;
+}
+
+textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+/* ============================================
+   TABLE
+   ============================================ */
+.table-wrapper {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+thead th {
+    background: #fff7ed;
+    color: black;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid #fed7aa;
+}
+
+tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+
+tbody tr:hover td {
+    background: #fffbf5;
+}
+
+.item-code-cell {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ============================================
+   TOTALS BOX
+   ============================================ */
+.totals-box {
+    background: rgba(255, 247, 237, 0.7);
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    padding: 20px 24px;
+    min-width: 280px;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+}
+
+.totals-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 0;
+    font-size: 14px;
+}
+
+.totals-row.total-final {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-main);
+    border-top: 2px solid #fed7aa;
+    margin-top: 8px;
+    padding-top: 14px;
+}
+
+.totals-row span:first-child {
+    color: var(--text-muted);
+}
+
+.totals-row.total-final span:last-child {
+    color: var(--accent-orange);
+}
+
+/* ============================================
+   TERMS GRID
+   ============================================ */
+.terms-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+
+/* ============================================
+   TRUCK SECTION
+   ============================================ */
+.truck-info-display-view {
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 12px;
+    font-size: 13px;
+}
+
+.truck-info-display-view strong {
+    color: #166534;
+}
+
+.truck-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ============================================
+   WITHHOLDING TAX SECTION
+   ============================================ */
+.tax-section-view {
+    margin-top: 20px;
+    background: #fefce8;
+    border: 1px solid #fde047;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.tax-details-view {
+    border-top: 1px dashed #fde047;
+    padding-top: 15px;
+    margin-top: 5px;
+}
+
+.tax-row-view {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    font-size: 13px;
+}
+
+.tax-label-view {
+    font-weight: 500;
+    color: #854d0e;
+}
+
+.tax-value-view {
+    font-weight: 600;
+    color: #854d0e;
+}
+
+.net-amount-row-view {
+    background: #fef3c7;
+    margin-top: 8px;
+    padding: 10px;
+    border-radius: 8px;
+    font-size: 15px;
+}
+
+.net-amount-row-view .tax-label-view {
+    font-size: 15px;
+}
+
+.net-amount-row-view .tax-value-view {
+    font-size: 16px;
+    color: #b45309;
+}
+
+/* ============================================
+   VAT STATUS BADGE (view)
+   ============================================ */
+.vat-status-badge-view {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 4px;
+}
+
+.vat-status-badge-view.inclusive {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.vat-status-badge-view.exclusive {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+/* ============================================
+   CANCEL / RESTORE PO TOGGLE BUTTON
+   ============================================ */
+.cancel-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 999px;
+    border: 1px solid #fca5a5;
+    background: #fef2f2;
+    color: #b91c1c;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    white-space: nowrap;
+}
+
+.cancel-toggle-btn:hover {
+    background: #fee2e2;
+    border-color: #ef4444;
+    color: #991b1b;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(239, 68, 68, 0.15);
+}
+
+.cancel-toggle-btn:active {
+    transform: translateY(0);
+    box-shadow: none;
+}
+
+.cancel-toggle-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.cancel-toggle-btn.is-cancelled {
+    border-color: #86efac;
+    background: #f0fdf4;
+    color: #15803d;
+}
+
+.cancel-toggle-btn.is-cancelled:hover {
+    background: #dcfce7;
+    border-color: #22c55e;
+    color: #166534;
+    box-shadow: 0 2px 6px rgba(34, 197, 94, 0.15);
+}
+
+.cancelled-info {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 3px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+/* ============================================
+   NO PO SELECTED
+   ============================================ */
+.no-po-selected {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+}
+
+.no-po-selected i {
+    width: 48px;
+    height: 48px;
+    color: #94a3b8;
+    margin-bottom: 16px;
+}
+
+/* ============================================
+   ACCESS DENIED MODAL
+   ============================================ */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.95);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    -webkit-backdrop-filter: blur(5px);
+    backdrop-filter: blur(5px);
+}
+
+.access-modal {
+    background: white;
+    width: 100%;
+    max-width: 380px;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.access-modal i {
+    width: 56px;
+    height: 56px;
+    color: #ef4444;
+    margin-bottom: 16px;
+}
+
+.access-modal h3 {
+    margin: 0 0 8px 0;
+    color: #1e293b;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.access-modal p {
+    color: #64748b;
+    font-size: 14px;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+.modal-btn {
+    background: #2563eb;
+    color: white;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+    min-width: 120px;
+}
+
+.modal-btn:hover {
+    background: #1d4ed8;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 768px) {
+    .main-content {
+        margin-left: 70px;
+    }
+
+    header {
+        padding: 0 16px;
+    }
+
+    .content-body {
+        padding: 16px;
+    }
+
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .page-header-actions {
+        flex-wrap: wrap;
+    }
+
+    .terms-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .totals-box {
+        min-width: 100%;
+    }
+
+    .po-header-info {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+@media print {
+    .filter-section,
+    .page-header-actions .back-btn,
+    .page-header-actions .print-btn,
+    .page-header-actions .view-orders-btn,
+    .cancel-toggle-btn,
+    .view-only-badge {
+        display: none !important;
+    }
+
+    .main-content {
+        margin-left: 0 !important;
+        padding: 20px !important;
+    }
+
+    .sidebar {
+        display: none !important;
+    }
+
+    .form-card {
+        break-inside: avoid;
+    }
+}
+
+
+
+
+        /* Cancel / Restore PO toggle button */
+        .cancel-toggle-btn {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-        }
-        
-        .filter-section {
-            background: white;
-            border-radius: 12px;
-            padding: 20px 24px;
-            margin-bottom: 24px;
-            border: 1px solid #e2e8f0;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            flex-wrap: wrap;
-        }
-        
-        .filter-section label {
-            font-weight: 500;
-            font-size: 14px;
-            color: var(--text-main);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        .filter-section select {
-            padding: 8px 16px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            font-size: 14px;
-            min-width: 200px;
-            background: white;
+            padding: 5px 12px;
+            font-size: 20px;
+            font-weight: 600;
+            border-radius: 999px;
+            border: 1px solid #fca5a5;
+            background: #fef2f2;
+            color: #b91c1c;
             cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+            white-space: nowrap;
         }
-        
-        .filter-section select:focus {
-            outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-        
-        .po-header-info {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 20px;
-            padding: 16px;
-            background: #f8fafc;
-            border-radius: 8px;
-        }
-        
-        .po-header-info .info-item {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        .po-header-info .info-item .label {
-            font-size: 15px;
-            color: black;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .po-header-info .info-item .value {
-            font-size: 14px;
-            font-weight: 600;
-            color: #0900ab;
-            margin-top: 4px;
-        }
-        
-        .status-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        
-        .status-badge.created {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        
-        .status-badge.approved {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        
-        .status-badge.received {
-            background: #dbeafe;
-            color: #1e40af;
-        }
-        
-        .status-badge.completed {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        
-        .status-badge.cancelled {
+        .cancel-toggle-btn:hover {
             background: #fee2e2;
+            border-color: #ef4444;
             color: #991b1b;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 6px rgba(239, 68, 68, 0.15);
         }
-        
-        .no-po-selected {
-            text-align: center;
-            padding: 60px 20px;
-            color: var(--text-muted);
+        .cancel-toggle-btn:active {
+            transform: translateY(0);
+            box-shadow: none;
         }
-        
-        .no-po-selected i {
-            width: 48px;
-            height: 48px;
-            color: #94a3b8;
-            margin-bottom: 16px;
+        .cancel-toggle-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
-        
-        .back-btn {
-            background: white;
-            border: 1px solid #e2e8f0;
-            color: #1f2937;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-        }
-        
-        .back-btn:hover {
-            background: #f9fafb;
-            border-color: #cbd5e1;
-        }
-        
-        .page-header-actions {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .truck-info-display-view {
+        .cancel-toggle-btn.is-cancelled {
+            border-color: #86efac;
             background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-radius: 8px;
-            padding: 12px;
-            margin-top: 12px;
-            font-size: 13px;
+            color: #15803d;
         }
-        
-        .truck-info-display-view strong {
+        .cancel-toggle-btn.is-cancelled:hover {
+            background: #dcfce7;
+            border-color: #22c55e;
             color: #166534;
+            box-shadow: 0 2px 6px rgba(34, 197, 94, 0.15);
         }
-        
-        .tax-section-view {
-            margin-top: 20px;
-            background: #fefce8;
-            border: 1px solid #fde047;
-            border-radius: 12px;
-            padding: 16px;
-        }
-        
-        .tax-details-view {
-            border-top: 1px dashed #fde047;
-            padding-top: 15px;
-            margin-top: 5px;
-        }
-        
-        .tax-row-view {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 0;
-            font-size: 13px;
-        }
-        
-        .tax-label-view {
-            font-weight: 500;
-            color: #854d0e;
-        }
-        
-        .tax-value-view {
-            font-weight: 600;
-            color: #854d0e;
-        }
-        
-        .net-amount-row-view {
-            background: #fef3c7;
-            margin-top: 8px;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 15px;
-        }
-        
-        .net-amount-row-view .tax-label-view {
-            font-size: 15px;
-        }
-        
-        .net-amount-row-view .tax-value-view {
-            font-size: 16px;
-            color: #b45309;
-        }
-        
-        .vat-status-badge-view {
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 12px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-left: 4px;
-        }
-        
-        .vat-status-badge-view.inclusive {
-            background: #dbeafe;
-            color: #1e40af;
-        }
-        
-        .vat-status-badge-view.exclusive {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        
-        .print-btn {
-            background: #1f2937;
-            border: none;
-            color: white !important;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
+        .cancelled-info {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-        }
-        
-        .print-btn:hover {
-            background: #374151;
-        }
-        
-        .print-status-badge {
-            display: inline-block;
-            padding: 2px 10px;
-            border-radius: 12px;
+            gap: 4px;
             font-size: 11px;
-            font-weight: 600;
-            margin-left: 8px;
-        }
-        
-        .print-status-badge.printed {
-            background: #dbeafe;
-            color: #1e40af;
-        }
-        
-        .print-status-badge.unprinted {
-            background: #f3f4f6;
             color: #6b7280;
+            background: #f3f4f6;
+            padding: 3px 8px;
+            border-radius: 999px;
+            white-space: nowrap;
         }
-        
+        .status-badge.cancelled {
+            background: #fef2f2;
+            color: #b91c1c;
+            border-color: #fca5a5;
+        }
         @keyframes spin {
             from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-        }
-        
-        @media print {
-            .filter-section,
-            .page-header-actions .back-btn,
-            .page-header-actions .print-btn {
-                display: none !important;
-            }
-            
-            .main-content {
-                margin-left: 0 !important;
-                padding: 20px !important;
-            }
-            
-            .sidebar {
-                display: none !important;
-            }
-            
-            .form-card {
-                break-inside: avoid;
-            }
+            to   { transform: rotate(360deg); }
         }
