@@ -1,8 +1,110 @@
 <?php
 // employee_list.php
 session_start();
+date_default_timezone_set('Asia/Manila');
+
 require_once __DIR__ . '/../config/config.php';
-require_once __DIR__ . '/../config/access_control.php'; // Include centralized access control
+require_once __DIR__ . '/../config/access_control.php';
+
+// ============================================================
+// EMPLOYEE IMAGE CONFIGURATION
+// ============================================================
+define('EMP_IMAGE_DIR', __DIR__ . '/../uploads/employee_images/');
+define('EMP_IMAGE_URL', '../uploads/employee_images/');
+$allowed_image_ext = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+// Helper: Save (or replace) employee image — stores filename in employee_list.profile_picture
+function saveEmployeeImage($conn, $employee_code, $file) {
+    global $allowed_image_ext;
+
+    if (empty($file['name'])) return ['saved' => false, 'error' => null]; // no file
+    if ($file['error'] === UPLOAD_ERR_NO_FILE) return ['saved' => false, 'error' => null];
+    if ($file['error'] !== UPLOAD_ERR_OK) return ['saved' => false, 'error' => 'Upload failed.'];
+
+    if (!is_dir(EMP_IMAGE_DIR)) {
+        if (!mkdir(EMP_IMAGE_DIR, 0755, true)) {
+            return ['saved' => false, 'error' => 'Failed to create upload directory.'];
+        }
+    }
+
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowed_image_ext)) {
+        return ['saved' => false, 'error' => 'Invalid file type.'];
+    }
+    if (@getimagesize($file['tmp_name']) === false) {
+        return ['saved' => false, 'error' => 'File is not a valid image.'];
+    }
+
+    // Delete old image if exists (replace behavior)
+    deleteEmployeeImage($conn, $employee_code);
+
+    $safe_code = preg_replace('/[^A-Za-z0-9_\-]/', '_', $employee_code);
+    $filename  = $safe_code . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+    $target    = EMP_IMAGE_DIR . $filename;
+
+    if (!move_uploaded_file($file['tmp_name'], $target)) {
+        return ['saved' => false, 'error' => 'Failed to save uploaded file.'];
+    }
+
+    // Update employee_list table with the new filename
+    $stmt = mysqli_prepare(
+        $conn,
+        "UPDATE employee_list SET profile_picture = ? WHERE employee_code = ?"
+    );
+    mysqli_stmt_bind_param($stmt, "ss", $filename, $employee_code);
+    $ok = mysqli_stmt_execute($stmt);
+    mysqli_stmt_close($stmt);
+
+    if (!$ok) {
+        @unlink($target);
+        return ['saved' => false, 'error' => 'DB update failed.'];
+    }
+    return ['saved' => true, 'error' => null, 'filename' => $filename];
+}
+
+// Helper: Get image filename for a single employee from employee_list
+function getEmployeeImage($conn, $employee_code) {
+    $stmt = mysqli_prepare($conn, "SELECT id, profile_picture FROM employee_list WHERE employee_code = ? LIMIT 1");
+    mysqli_stmt_bind_param($stmt, "s", $employee_code);
+    mysqli_stmt_execute($stmt);
+    $res = mysqli_stmt_get_result($stmt);
+    $row = mysqli_fetch_assoc($res);
+    mysqli_stmt_close($stmt);
+    return $row ?: null;
+}
+
+// Helper: Map of employee_code => image filename for table rendering
+function getEmployeeImageMap($conn) {
+    $map = [];
+    $res = mysqli_query($conn, "SELECT employee_code, profile_picture FROM employee_list WHERE profile_picture IS NOT NULL AND profile_picture != ''");
+    if ($res) {
+        while ($row = mysqli_fetch_assoc($res)) {
+            $map[$row['employee_code']] = $row['profile_picture'];
+        }
+    }
+    return $map;
+}
+
+// Helper: Delete an employee's image (file + clear DB column)
+function deleteEmployeeImage($conn, $employee_code) {
+    $stmt = mysqli_prepare($conn, "SELECT profile_picture FROM employee_list WHERE employee_code = ? LIMIT 1");
+    mysqli_stmt_bind_param($stmt, "s", $employee_code);
+    mysqli_stmt_execute($stmt);
+    $res = mysqli_stmt_get_result($stmt);
+    if ($row = mysqli_fetch_assoc($res)) {
+        if (!empty($row['profile_picture'])) {
+            $file = EMP_IMAGE_DIR . $row['profile_picture'];
+            if (file_exists($file)) @unlink($file);
+        }
+    }
+    mysqli_stmt_close($stmt);
+
+    // Clear the profile_picture column
+    $upd = mysqli_prepare($conn, "UPDATE employee_list SET profile_picture = NULL WHERE employee_code = ?");
+    mysqli_stmt_bind_param($upd, "s", $employee_code);
+    mysqli_stmt_execute($upd);
+    mysqli_stmt_close($upd);
+}
 
 // Flash message handling
 $flash = null;
@@ -20,15 +122,11 @@ if (!isset($_SESSION['user_id'])) {
 $user_id    = $_SESSION['user_id'];
 $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Admin';
-$full_name = $_SESSION['full_name'] ?? $username;
+$full_name  = $_SESSION['full_name'] ?? $username;
 
-// Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
+$is_admin   = in_array('admin', $user_roles);
 
-// Define base role - if 'admin' exists, user is admin
-$is_admin = in_array('admin', $user_roles);
-
-// Access Control - Only admin can access this page directly
 if (!$is_admin) {
     $_SESSION['flash_message'] = [
         'type' => 'error',
@@ -38,65 +136,49 @@ if (!$is_admin) {
     exit;
 }
 
-// Define allowed pages based on roles - Now using centralized $allowed_pages from access_control.php
-
-// Function to check if user has access to a specific page - Now using centralized hasAccess() function
-
-// Function to get display name for roles - Now using centralized getRoleDisplayName() function
-
 $role_display_name = getRoleDisplayName($user_roles);
-
-// Set current page for sidebar
 $current_page = basename($_SERVER['PHP_SELF']);
 
 // Function to generate next employee code
 function generateEmployeeCode($conn) {
-    // Get the latest employee code
     $query = "SELECT employee_code FROM employee_list ORDER BY id DESC LIMIT 1";
     $result = $conn->query($query);
-    
+
     if ($result && $result->num_rows > 0) {
         $row = $result->fetch_assoc();
         $last_code = $row['employee_code'];
-        // Extract the number from EMP-XXXXX
         $num = intval(substr($last_code, 4));
         $next_num = $num + 1;
     } else {
-        // Start with 1 if no employees exist
         $next_num = 1;
     }
-    
-    // Format with leading zeros (5 digits)
+
     return 'EMP-' . str_pad($next_num, 5, '0', STR_PAD_LEFT);
 }
 
 // Handle Add Employee form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
-    // Auto-generate employee code
     $employee_code = generateEmployeeCode($conn);
-    
-    $first_name = trim($_POST['first_name'] ?? '');
-    $middle_name = trim($_POST['middle_name'] ?? '');
-    $last_name = trim($_POST['last_name'] ?? '');
-    $suffix = trim($_POST['suffix'] ?? '');
-    $email = trim($_POST['email'] ?? '');
+
+    $first_name     = trim($_POST['first_name'] ?? '');
+    $middle_name    = trim($_POST['middle_name'] ?? '');
+    $last_name      = trim($_POST['last_name'] ?? '');
+    $suffix         = trim($_POST['suffix'] ?? '');
+    $email          = trim($_POST['email'] ?? '');
     $contact_number = trim($_POST['contact_number'] ?? '');
-    $department = trim($_POST['department'] ?? '');
-    $position = trim($_POST['position'] ?? '');
-    $location = trim($_POST['location'] ?? '');
-    $status = trim($_POST['status'] ?? 'active');
-    $date_hired = !empty($_POST['date_hired']) ? $_POST['date_hired'] : null;
+    $department     = trim($_POST['department'] ?? '');
+    $position       = trim($_POST['position'] ?? '');
+    $location       = trim($_POST['location'] ?? '');
+    $status         = trim($_POST['status'] ?? 'active');
+    $date_hired     = !empty($_POST['date_hired']) ? $_POST['date_hired'] : null;
     $date_separated = !empty($_POST['date_separated']) ? $_POST['date_separated'] : null;
-    $notes = trim($_POST['notes'] ?? '');
-    
-    // Build full name with suffix
+    $notes          = trim($_POST['notes'] ?? '');
+
     $full_name_parts = array_filter([$first_name, $middle_name, $last_name]);
     $full_name = implode(' ', $full_name_parts);
-    if (!empty($suffix)) {
-        $full_name .= ' ' . $suffix;
-    }
+    if (!empty($suffix)) $full_name .= ' ' . $suffix;
     $full_name = preg_replace('/\s+/', ' ', $full_name);
-    
+
     $errors = [];
     if (empty($first_name)) $errors[] = "First name is required.";
     if (empty($last_name)) $errors[] = "Last name is required.";
@@ -104,70 +186,74 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
     if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $errors[] = "Invalid email format.";
     }
-    
+
     if (empty($errors)) {
         $created_by = $username;
-        
+
         $stmt = $conn->prepare("
             INSERT INTO employee_list 
             (employee_code, first_name, middle_name, last_name, suffix, full_name, email, contact_number, 
              department, position, location, status, date_hired, date_separated, notes, created_at, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
         ");
-        $stmt->bind_param("ssssssssssssssss", 
-            $employee_code, $first_name, $middle_name, $last_name, $suffix, $full_name, 
-            $email, $contact_number, $department, $position, $location, $status, 
+        $stmt->bind_param("ssssssssssssssss",
+            $employee_code, $first_name, $middle_name, $last_name, $suffix, $full_name,
+            $email, $contact_number, $department, $position, $location, $status,
             $date_hired, $date_separated, $notes, $created_by
         );
-        
+
         if ($stmt->execute()) {
+            $stmt->close();
+
+            // Save employee image (if uploaded) — now updates employee_list.profile_picture
+            $imgNote = '';
+            if (!empty($_FILES['employee_image']['name'])) {
+                $imgResult = saveEmployeeImage($conn, $employee_code, $_FILES['employee_image']);
+                if ($imgResult['saved']) {
+                    $imgNote = " Profile picture uploaded.";
+                } elseif (!empty($imgResult['error'])) {
+                    $imgNote = " (Image warning: " . $imgResult['error'] . ")";
+                }
+            }
+
             $_SESSION['flash_message'] = [
-                'text' => "Employee added successfully! Code: " . $employee_code,
+                'text' => "Employee added successfully! Code: " . $employee_code . $imgNote,
                 'type' => 'success'
             ];
             header("Location: employee_list.php");
             exit;
         } else {
-            $flash = [
-                'text' => "Database error: " . $conn->error,
-                'type' => 'error'
-            ];
+            $flash = ['text' => "Database error: " . $conn->error, 'type' => 'error'];
+            $stmt->close();
         }
-        $stmt->close();
     } else {
-        $flash = [
-            'text' => implode("<br>", $errors),
-            'type' => 'error'
-        ];
+        $flash = ['text' => implode("<br>", $errors), 'type' => 'error'];
     }
 }
 
 // Handle Edit Employee form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
     $edit_employee_id = $_POST['employee_id'];
-    $employee_code = trim($_POST['employee_code'] ?? '');
-    $first_name = trim($_POST['first_name'] ?? '');
-    $middle_name = trim($_POST['middle_name'] ?? '');
-    $last_name = trim($_POST['last_name'] ?? '');
-    $suffix = trim($_POST['suffix'] ?? '');
-    $email = trim($_POST['email'] ?? '');
-    $contact_number = trim($_POST['contact_number'] ?? '');
-    $department = trim($_POST['department'] ?? '');
-    $position = trim($_POST['position'] ?? '');
-    $location = trim($_POST['location'] ?? '');
-    $status = trim($_POST['status'] ?? 'active');
-    $date_hired = !empty($_POST['date_hired']) ? $_POST['date_hired'] : null;
-    $date_separated = !empty($_POST['date_separated']) ? $_POST['date_separated'] : null;
-    $notes = trim($_POST['notes'] ?? '');
-    
-    // Build full name with suffix
+    $employee_code    = trim($_POST['employee_code'] ?? '');
+    $first_name       = trim($_POST['first_name'] ?? '');
+    $middle_name      = trim($_POST['middle_name'] ?? '');
+    $last_name        = trim($_POST['last_name'] ?? '');
+    $suffix           = trim($_POST['suffix'] ?? '');
+    $email            = trim($_POST['email'] ?? '');
+    $contact_number   = trim($_POST['contact_number'] ?? '');
+    $department       = trim($_POST['department'] ?? '');
+    $position         = trim($_POST['position'] ?? '');
+    $location         = trim($_POST['location'] ?? '');
+    $status           = trim($_POST['status'] ?? 'active');
+    $date_hired       = !empty($_POST['date_hired']) ? $_POST['date_hired'] : null;
+    $date_separated   = !empty($_POST['date_separated']) ? $_POST['date_separated'] : null;
+    $notes            = trim($_POST['notes'] ?? '');
+
     $full_name_parts = array_filter([$first_name, $middle_name, $last_name]);
     $full_name = implode(' ', $full_name_parts);
-    if (!empty($suffix)) {
-        $full_name .= ' ' . $suffix;
-    }
+    if (!empty($suffix)) $full_name .= ' ' . $suffix;
     $full_name = preg_replace('/\s+/', ' ', $full_name);
-    
+
     $errors = [];
     if (empty($employee_code)) $errors[] = "Employee ID is required.";
     if (empty($first_name)) $errors[] = "First name is required.";
@@ -176,9 +262,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
     if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $errors[] = "Invalid email format.";
     }
-    
+
     if (empty($errors)) {
-        // Check if employee code exists for other employees
         $stmt = $conn->prepare("SELECT id FROM employee_list WHERE employee_code = ? AND id != ?");
         $stmt->bind_param("si", $employee_code, $edit_employee_id);
         $stmt->execute();
@@ -187,10 +272,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
         }
         $stmt->close();
     }
-    
+
+    // Need to get the OLD employee_code before updating, for image cleanup
+    $old_employee_code = '';
+    if (empty($errors)) {
+        $stmt = $conn->prepare("SELECT employee_code FROM employee_list WHERE id = ?");
+        $stmt->bind_param("i", $edit_employee_id);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $old_employee_code = $row['employee_code'] ?? '';
+        $stmt->close();
+    }
+
     if (empty($errors)) {
         $updated_by = $username;
-        
+
         $stmt = $conn->prepare("
             UPDATE employee_list 
             SET employee_code = ?, first_name = ?, middle_name = ?, last_name = ?, suffix = ?, full_name = ?,
@@ -198,53 +294,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
                 date_hired = ?, date_separated = ?, notes = ?, updated_at = NOW(), updated_by = ?
             WHERE id = ?
         ");
-        $stmt->bind_param("ssssssssssssssssi", 
+        $stmt->bind_param("ssssssssssssssssi",
             $employee_code, $first_name, $middle_name, $last_name, $suffix, $full_name,
             $email, $contact_number, $department, $position, $location, $status,
             $date_hired, $date_separated, $notes, $updated_by, $edit_employee_id
         );
-        
+
         if ($stmt->execute()) {
+            $stmt->close();
+
+            // Handle image operations
+            $imgNote = '';
+
+            // If employee_code changed, and there was an image, we need to handle it
+            // (the file is named based on employee_code, but stored in profile_picture column)
+            // We'll use the new employee_code for any image operations going forward.
+
+            // Remove existing image?
+            if (!empty($_POST['remove_employee_image']) && $_POST['remove_employee_image'] == '1') {
+                deleteEmployeeImage($conn, $employee_code);
+                $imgNote = " Profile picture removed.";
+            }
+
+            // New image uploaded?
+            if (!empty($_FILES['employee_image']['name'])) {
+                $imgResult = saveEmployeeImage($conn, $employee_code, $_FILES['employee_image']);
+                if ($imgResult['saved']) {
+                    $imgNote = " Profile picture updated.";
+                } elseif (!empty($imgResult['error'])) {
+                    $imgNote = " (Image warning: " . $imgResult['error'] . ")";
+                }
+            }
+
             $_SESSION['flash_message'] = [
-                'text' => "Employee updated successfully!",
+                'text' => "Employee updated successfully!" . $imgNote,
                 'type' => 'success'
             ];
             header("Location: employee_list.php");
             exit;
         } else {
-            $flash = [
-                'text' => "Database error: " . $conn->error,
-                'type' => 'error'
-            ];
+            $flash = ['text' => "Database error: " . $conn->error, 'type' => 'error'];
+            $stmt->close();
         }
-        $stmt->close();
     } else {
-        $flash = [
-            'text' => implode("<br>", $errors),
-            'type' => 'error'
-        ];
+        $flash = ['text' => implode("<br>", $errors), 'type' => 'error'];
     }
 }
 
-// Get search term from GET
+// Search
 $search_term = isset($_GET['search']) ? trim($_GET['search']) : '';
 
-// Fetch employees with search filter
 if (!empty($search_term)) {
-    $search_term = mysqli_real_escape_string($conn, $search_term);
+    $search_term_sql = mysqli_real_escape_string($conn, $search_term);
     $query = "SELECT *, 
               DATE_FORMAT(updated_at, '%M %d, %Y %h:%i %p') as updated_at_formatted,
               DATE_FORMAT(created_at, '%M %d, %Y %h:%i %p') as created_at_formatted
               FROM employee_list 
-              WHERE employee_code LIKE '%$search_term%' 
-              OR first_name LIKE '%$search_term%'
-              OR middle_name LIKE '%$search_term%'
-              OR last_name LIKE '%$search_term%'
-              OR full_name LIKE '%$search_term%'
-              OR email LIKE '%$search_term%'
-              OR department LIKE '%$search_term%'
-              OR position LIKE '%$search_term%'
-              OR location LIKE '%$search_term%'
+              WHERE employee_code LIKE '%$search_term_sql%' 
+              OR first_name LIKE '%$search_term_sql%'
+              OR middle_name LIKE '%$search_term_sql%'
+              OR last_name LIKE '%$search_term_sql%'
+              OR full_name LIKE '%$search_term_sql%'
+              OR email LIKE '%$search_term_sql%'
+              OR department LIKE '%$search_term_sql%'
+              OR position LIKE '%$search_term_sql%'
+              OR location LIKE '%$search_term_sql%'
               ORDER BY created_at DESC";
 } else {
     $query = "SELECT *, 
@@ -261,10 +375,11 @@ if ($result) {
     }
 }
 
-// Get the next employee code for display
+// Load image map for table
+$employeeImageMap = getEmployeeImageMap($conn);
+
 $next_employee_code = generateEmployeeCode($conn);
 
-// Common position list for dropdown
 $common_positions = [
     'ACCOUNTANT' => 'Accountant',
     'ADMINISTRATIVE ASSISTANT' => 'Administrative Assistant',
@@ -304,7 +419,53 @@ $common_positions = [
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
     <link rel="stylesheet" href="css/employee_list.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
-   
+    <style>
+        /* Added CSS for the X button */
+        .employee-image-preview-item {
+            position: relative;
+        }
+        .image-remove-btn {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            background: rgba(220, 38, 38, 0.9);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 22px;
+            height: 22px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 1;
+            padding: 0;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        }
+        .image-remove-btn:hover {
+            background: rgba(185, 28, 28, 1);
+            transform: scale(1.1);
+        }
+        .employee-image-preview-item.marked-for-removal img {
+            opacity: 0.3;
+        }
+        .employee-image-preview-item.marked-for-removal::after {
+            content: "Will be removed";
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #dc2626;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            padding: 5px;
+        }
+    </style>
 </head>
 <body>
 
@@ -318,7 +479,6 @@ $common_positions = [
     </div>
 </div>
 
-<!-- Include Sidebar -->
 <?php include 'sidebar.php'; ?>
 
 <main class="main-content">
@@ -346,16 +506,15 @@ $common_positions = [
                     Next employee code: <strong style="color: var(--accent-blue);"><?php echo $next_employee_code; ?></strong>
                 </div>
             </div>
-            
+
             <div class="header-actions">
-                <!-- Search Bar -->
                 <form method="GET" action="" style="flex: 1; min-width: 200px;">
                     <div class="search-container">
                         <i data-lucide="search"></i>
-                        <input 
-                            type="text" 
-                            name="search" 
-                            placeholder="Search by Name, Code, Email, Department..." 
+                        <input
+                            type="text"
+                            name="search"
+                            placeholder="Search by Name, Code, Email, Department..."
                             value="<?php echo htmlspecialchars($search_term); ?>"
                             id="searchInput"
                             autocomplete="off"
@@ -365,17 +524,16 @@ $common_positions = [
                         </button>
                     </div>
                 </form>
-                
+
                 <button id="openAddModal" style="background: var(--accent-blue); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 8px; white-space: nowrap;">
                     <i data-lucide="user-plus" style="width: 18px;"></i> Add Employee
                 </button>
             </div>
         </div>
 
-        <!-- Search Results Info -->
         <?php if (!empty($search_term)): ?>
             <div class="search-results-info">
-                Showing results for "<strong><?php echo htmlspecialchars($search_term); ?></strong>" 
+                Showing results for "<strong><?php echo htmlspecialchars($search_term); ?></strong>"
                 (<?php echo count($employees); ?> found)
                 <a href="employee_list.php" style="color: var(--accent-blue); text-decoration: none; margin-left: 8px; font-weight: 500;">
                     Clear search
@@ -387,6 +545,7 @@ $common_positions = [
             <table>
                 <thead>
                     <tr>
+                        <th style="width:60px;">Photo</th>
                         <th>Employee ID</th>
                         <th>Full Name</th>
                         <th>Email</th>
@@ -400,7 +559,7 @@ $common_positions = [
                 <tbody>
                     <?php if (empty($employees)): ?>
                         <tr>
-                            <td colspan="8" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                            <td colspan="9" style="text-align: center; padding: 40px; color: var(--text-muted);">
                                 <?php if (!empty($search_term)): ?>
                                     No employees found matching "<strong><?php echo htmlspecialchars($search_term); ?></strong>"
                                     <br>
@@ -414,7 +573,23 @@ $common_positions = [
                         </tr>
                     <?php else: ?>
                         <?php foreach ($employees as $e): ?>
+                            <?php $imgFile = $employeeImageMap[$e['employee_code']] ?? null; ?>
                             <tr>
+                                <td>
+                                    <?php if ($imgFile): ?>
+                                        <img src="../uploads/employee_images/<?php echo htmlspecialchars($imgFile); ?>"
+                                             alt="Employee"
+                                             class="employee-avatar"
+                                             title="Uploaded by <?php echo htmlspecialchars($e['full_name']); ?>">
+                                    <?php else: ?>
+                                        <div class="employee-avatar employee-avatar-placeholder">
+                                            <?php
+                                                $initials = strtoupper(substr($e['first_name'] ?? '', 0, 1) . substr($e['last_name'] ?? '', 0, 1));
+                                                echo htmlspecialchars($initials ?: '?');
+                                            ?>
+                                        </div>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <span class="employee-code"><?php echo htmlspecialchars($e['employee_code']); ?></span>
                                 </td>
@@ -448,7 +623,7 @@ $common_positions = [
                                 </td>
                                 <td>
                                     <button class="action-btn edit-employee-btn" data-employee='<?php echo json_encode($e); ?>'>
-                                        <i data-lucide="edit-3" style="width: 18px;"></i>
+                                        <i data-lucide="edit-3" style="width: 18px;"></i> View / Edit
                                     </button>
                                 </td>
                             </tr>
@@ -457,8 +632,7 @@ $common_positions = [
                 </tbody>
             </table>
         </div>
-        
-        <!-- Employee Count -->
+
         <div style="margin-top: 16px; font-size: 14px; color: var(--text-muted);">
             Total Employees: <strong><?php echo count($employees); ?></strong>
         </div>
@@ -472,14 +646,14 @@ $common_positions = [
             <div class="modal-title">Add New Employee</div>
             <button class="modal-close" id="closeAddModal">×</button>
         </div>
-        <form method="POST" id="addEmployeeForm">
+        <form method="POST" id="addEmployeeForm" enctype="multipart/form-data">
             <div class="modal-body">
                 <div class="form-grid">
                     <div class="form-group col-3">
                         <label for="add_employee_code">Employee ID</label>
                         <div class="code-input-wrapper">
-                            <input type="text" id="add_employee_code" name="employee_code" 
-                                   value="<?php echo $next_employee_code; ?>" 
+                            <input type="text" id="add_employee_code" name="employee_code"
+                                   value="<?php echo $next_employee_code; ?>"
                                    readonly>
                             <span class="auto-generate-badge">Auto</span>
                         </div>
@@ -490,7 +664,7 @@ $common_positions = [
 
                     <div class="form-group col-3">
                         <label for="add_first_name">First Name *</label>
-                        <input type="text" id="add_first_name" name="first_name" required 
+                        <input type="text" id="add_first_name" name="first_name" required
                             oninput="this.value = this.value.toUpperCase()">
                     </div>
 
@@ -573,6 +747,12 @@ $common_positions = [
                         <label for="add_notes">Notes</label>
                         <input type="text" id="add_notes" name="notes" placeholder="Additional notes about the employee">
                     </div>
+
+                    <div class="form-group col-6">
+                        <label for="add_employee_image">Profile Picture <small style="font-weight:400; color:#64748b;">(max 1, jpg/png/gif/webp)</small></label>
+                        <input type="file" id="add_employee_image" name="employee_image" accept="image/*">
+                        <div id="add_employee_image_preview" class="employee-image-preview"></div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -590,19 +770,19 @@ $common_positions = [
             <div class="modal-title">Edit Employee</div>
             <button class="modal-close" id="closeEditModal">×</button>
         </div>
-        <form method="POST" id="editEmployeeForm">
+        <form method="POST" id="editEmployeeForm" enctype="multipart/form-data">
             <input type="hidden" name="employee_id" id="edit_employee_id">
             <div class="modal-body">
                 <div class="form-grid">
                     <div class="form-group col-3">
                         <label for="edit_employee_code">Employee ID *</label>
-                        <input type="text" id="edit_employee_code" name="employee_code" required 
+                        <input type="text" id="edit_employee_code" name="employee_code" required
                                style="text-transform: uppercase; font-weight:600; color:var(--accent-blue); background:#f8fafc;">
                     </div>
 
                     <div class="form-group col-3">
                         <label for="edit_first_name">First Name *</label>
-                        <input type="text" id="edit_first_name" name="first_name" required 
+                        <input type="text" id="edit_first_name" name="first_name" required
                             oninput="this.value = this.value.toUpperCase()">
                     </div>
 
@@ -624,7 +804,7 @@ $common_positions = [
                             oninput="this.value = this.value.toUpperCase()">
                     </div>
 
-                    <div class="form-group col-4">
+                    <div class="form-group col-2">
                         <label for="edit_full_name">Full Name</label>
                         <input type="text" id="edit_full_name" name="full_name_display" readonly style="background:#f8fafc; font-weight:500;">
                     </div>
@@ -681,9 +861,32 @@ $common_positions = [
                         <input type="date" id="edit_date_separated" name="date_separated">
                     </div>
 
-                    <div class="form-group col-6">
+                    <div class="form-group col-2">
                         <label for="edit_notes">Notes</label>
                         <input type="text" id="edit_notes" name="notes" placeholder="Additional notes about the employee">
+                    </div>
+
+                    <!-- Profile Picture Section -->
+                    <div class="form-group col-6">
+                        <label style="font-size: 13px; color: var(--text-muted); font-weight: 600; margin-bottom: 8px; display: block; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">
+                            <i data-lucide="image" style="width: 16px; height: 16px; display: inline-block; vertical-align: middle; margin-right: 6px;"></i>
+                            Profile Picture
+                        </label>
+                        <div class="employee-image-edit-wrap">
+                            <!-- The existing image will be rendered here -->
+                            <div id="edit_existing_image" class="employee-image-preview">
+                                <div style="color:#94a3b8; font-size:12px;">No image attached.</div>
+                            </div>
+                            
+                            <!-- Hidden input to tell PHP to remove the image -->
+                            <input type="hidden" name="remove_employee_image" id="edit_remove_image" value="0">
+
+                            <div style="margin-top:10px;">
+                                <label for="edit_employee_image" style="font-size:12px; color:#475569; display:block; margin-bottom:4px;">Upload New (replaces existing)</label>
+                                <input type="file" id="edit_employee_image" name="employee_image" accept="image/*">
+                                <div id="edit_new_image_preview" class="employee-image-preview"></div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Audit Trail Section -->
@@ -694,19 +897,19 @@ $common_positions = [
                         </label>
                         <div class="audit-trail">
                             <div class="audit-row">
-                                <span class="audit-label">Created By</span>
+                                <span class="audit-label">Created By: </span>
                                 <span class="audit-value" id="edit_created_by">-</span>
                             </div>
                             <div class="audit-row">
-                                <span class="audit-label">Created At</span>
-                                <span class="audit-value" id="edit_created_at">-</span>
-                            </div>
-                            <div class="audit-row">
-                                <span class="audit-label">Last Updated By</span>
+                                <span class="audit-label">Last Updated By: </span>
                                 <span class="audit-value" id="edit_updated_by">-</span>
                             </div>
                             <div class="audit-row">
-                                <span class="audit-label">Last Updated At</span>
+                                <span class="audit-label">Created At: </span>
+                                <span class="audit-value" id="edit_created_at">-</span>
+                            </div>
+                            <div class="audit-row">
+                                <span class="audit-label">Last Updated At: </span>
                                 <span class="audit-value" id="edit_updated_at">-</span>
                             </div>
                         </div>
@@ -726,7 +929,7 @@ $common_positions = [
 <script>
     lucide.createIcons();
 
-    // Flash message auto-dismiss and refresh
+    // Flash auto-dismiss
     <?php if ($flash): ?>
     setTimeout(function() {
         const flashMsg = document.getElementById('flashMessage');
@@ -741,23 +944,15 @@ $common_positions = [
     }, 3000);
     <?php endif; ?>
 
-    // User roles from PHP
     const userRoles = <?php echo json_encode($user_roles); ?>;
-    
-    // Allowed pages from PHP
     const allowedPages = <?php echo json_encode($allowed_pages); ?>;
-    
-    // Access Denied Modal
+
     const modal = document.getElementById('accessModal');
 
     function checkAccess(page) {
-        if (userRoles.includes('admin')) {
-            return true;
-        }
+        if (userRoles.includes('admin')) return true;
         for (let role of userRoles) {
-            if (allowedPages[role] && allowedPages[role].includes(page)) {
-                return true;
-            }
+            if (allowedPages[role] && allowedPages[role].includes(page)) return true;
         }
         modal.style.display = 'flex';
         return false;
@@ -771,7 +966,7 @@ $common_positions = [
         if (e.target === modal) closeModal();
     });
 
-    // ── Search Functionality ──────────────────────────────────────
+    // Search
     const searchInput = document.getElementById('searchInput');
     const clearBtn = document.getElementById('clearSearch');
     const searchForm = searchInput?.closest('form');
@@ -813,16 +1008,15 @@ $common_positions = [
         }
     });
 
-    // ── Add Employee Modal ──────────────────────────────────────
+    // Add Employee Modal
     const addModal = document.getElementById('addEmployeeModal');
     const openAddBtn = document.getElementById('openAddModal');
     const closeAddBtn = document.getElementById('closeAddModal');
     const cancelAddBtn = document.getElementById('cancelAddModal');
     const addEmployeeForm = document.getElementById('addEmployeeForm');
 
-    function openAddEmployeeModal() { 
+    function openAddEmployeeModal() {
         addModal.style.display = 'flex';
-        // Refresh the employee code when opening the modal
         fetch('get_next_employee_code.php')
             .then(response => response.json())
             .then(data => {
@@ -830,33 +1024,19 @@ $common_positions = [
                     document.getElementById('add_employee_code').value = data.code;
                 }
             })
-            .catch(() => {
-                // Fallback: use the PHP-generated value already in the input
-            });
+            .catch(() => {});
     }
 
-    // Check if any field in the add form has a value (excluding the auto-generated employee code)
     function isAddFormDirty() {
         const fields = [
-            'add_first_name',
-            'add_middle_name',
-            'add_last_name',
-            'add_suffix',
-            'add_email',
-            'add_contact_number',
-            'add_department',
-            'add_position',
-            'add_location',
-            'add_status',
-            'add_date_hired',
-            'add_date_separated',
-            'add_notes'
+            'add_first_name','add_middle_name','add_last_name','add_suffix',
+            'add_email','add_contact_number','add_department','add_position',
+            'add_location','add_status','add_date_hired','add_date_separated','add_notes'
         ];
         for (const id of fields) {
             const el = document.getElementById(id);
             if (!el) continue;
             if (el.tagName === 'SELECT') {
-                // Status has a default value 'active', so treat it as dirty only if non-default
                 if (id === 'add_status') {
                     if (el.value && el.value !== 'active') return true;
                 } else if (el.value) {
@@ -866,6 +1046,9 @@ $common_positions = [
                 return true;
             }
         }
+        // Also check image
+        const img = document.getElementById('add_employee_image');
+        if (img && img.files && img.files.length > 0) return true;
         return false;
     }
 
@@ -873,13 +1056,14 @@ $common_positions = [
         addEmployeeForm.reset();
         const fullNameInput = document.getElementById('add_full_name');
         if (fullNameInput) fullNameInput.value = '';
+        const prev = document.getElementById('add_employee_image_preview');
+        if (prev) prev.innerHTML = '';
     }
 
     function closeAddEmployeeModal(skipConfirm = false) {
         if (!skipConfirm && isAddFormDirty()) {
-            const confirmDiscard = confirm("You have unsaved employee data. Are you sure you want to cancel adding this employee?\n\nClick OK to discard and close, or Cancel to keep editing.");
-            if (!confirmDiscard) {
-                return; // Keep the modal open
+            if (!confirm("You have unsaved employee data. Are you sure you want to cancel adding this employee?\n\nClick OK to discard and close, or Cancel to keep editing.")) {
+                return;
             }
         }
         resetAddForm();
@@ -894,7 +1078,6 @@ $common_positions = [
         if (e.target === addModal) closeAddEmployeeModal();
     });
 
-    // Reset form when the modal is opened fresh
     openAddBtn?.addEventListener('click', function() {
         resetAddForm();
     });
@@ -914,9 +1097,7 @@ $common_positions = [
         ].filter(Boolean);
         let fullName = parts.join(' ');
         const suffix = (addSuffixInput?.value || '').trim();
-        if (suffix) {
-            fullName += ' ' + suffix;
-        }
+        if (suffix) fullName += ' ' + suffix;
         if (addFullNameInput) addFullNameInput.value = fullName;
     }
 
@@ -924,13 +1105,31 @@ $common_positions = [
         input?.addEventListener('input', updateAddFullName);
     });
 
-    // ── Edit Employee Modal ──────────────────────────────────────
+    // Add modal image preview
+    const addImageInput = document.getElementById('add_employee_image');
+    addImageInput?.addEventListener('change', function () {
+        const container = document.getElementById('add_employee_image_preview');
+        container.innerHTML = '';
+        if (this.files && this.files[0]) {
+            const file = this.files[0];
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const div = document.createElement('div');
+                div.className = 'employee-image-preview-item';
+                div.innerHTML = `<img src="${e.target.result}" alt="preview">`;
+                container.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Edit Employee Modal
     const editModal = document.getElementById('editEmployeeModal');
     const closeEditBtn = document.getElementById('closeEditModal');
     const cancelEditBtn = document.getElementById('cancelEditModal');
     const editEmployeeForm = document.getElementById('editEmployeeForm');
 
-    // Edit Modal fields
     const editEmployeeId = document.getElementById('edit_employee_id');
     const editEmployeeCode = document.getElementById('edit_employee_code');
     const editFirstName = document.getElementById('edit_first_name');
@@ -947,8 +1146,7 @@ $common_positions = [
     const editDateHired = document.getElementById('edit_date_hired');
     const editDateSeparated = document.getElementById('edit_date_separated');
     const editNotes = document.getElementById('edit_notes');
-    
-    // Audit trail fields
+
     const editCreatedBy = document.getElementById('edit_created_by');
     const editCreatedAt = document.getElementById('edit_created_at');
     const editUpdatedBy = document.getElementById('edit_updated_by');
@@ -962,9 +1160,7 @@ $common_positions = [
         ].filter(Boolean);
         let fullName = parts.join(' ');
         const suffix = (editSuffix?.value || '').trim();
-        if (suffix) {
-            fullName += ' ' + suffix;
-        }
+        if (suffix) fullName += ' ' + suffix;
         if (editFullName) editFullName.value = fullName;
     }
 
@@ -972,11 +1168,60 @@ $common_positions = [
         input?.addEventListener('input', updateEditFullName);
     });
 
-    // Open Edit Modal with employee data
+    // Load existing employee image via AJAX — now from employee_list table
+    async function loadExistingEmployeeImage(employee_code) {
+        const container = document.getElementById('edit_existing_image');
+        const removeInput = document.getElementById('edit_remove_image');
+        if (!container) return;
+        
+        container.innerHTML = '<div style="color:#94a3b8; font-size:12px;">Loading...</div>';
+        if (removeInput) removeInput.value = '0'; // Reset removal flag
+
+        try {
+            const res = await fetch('get_employee_image.php?employee_code=' + encodeURIComponent(employee_code));
+            const data = await res.json();
+            container.innerHTML = '';
+            
+            if (data && data.profile_picture) {
+                const div = document.createElement('div');
+                div.className = 'employee-image-preview-item';
+                div.id = 'existing_image_wrapper'; // Add ID for easy targeting
+                
+                div.innerHTML = `
+                    <img src="../uploads/employee_images/${data.profile_picture}" alt="employee image">
+                    <button type="button" class="image-remove-btn" title="Remove Image" onclick="markImageForRemoval()">×</button>
+                `;
+                container.appendChild(div);
+            } else {
+                container.innerHTML = '<div style="color:#94a3b8; font-size:12px;">No image attached.</div>';
+            }
+        } catch (err) {
+            console.error(err);
+            container.innerHTML = '<div style="color:#dc2626; font-size:12px;">Failed to load image.</div>';
+        }
+    }
+
+    // Function to handle the X button click
+    function markImageForRemoval() {
+        const wrapper = document.getElementById('existing_image_wrapper');
+        const removeInput = document.getElementById('edit_remove_image');
+        
+        if (wrapper && removeInput) {
+            // Add visual class to show it's marked for removal
+            wrapper.classList.add('marked-for-removal');
+            // Set the hidden input value to 1 so PHP knows to delete it
+            removeInput.value = '1';
+            
+            // Optionally, remove the X button after clicking so they can't click it again
+            const btn = wrapper.querySelector('.image-remove-btn');
+            if (btn) btn.style.display = 'none';
+        }
+    }
+
     document.querySelectorAll('.edit-employee-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const employeeData = JSON.parse(this.dataset.employee);
-            
+
             editEmployeeId.value = employeeData.id;
             editEmployeeCode.value = employeeData.employee_code;
             editFirstName.value = employeeData.first_name;
@@ -992,17 +1237,48 @@ $common_positions = [
             editDateHired.value = employeeData.date_hired || '';
             editDateSeparated.value = employeeData.date_separated || '';
             editNotes.value = employeeData.notes || '';
-            
-            // Set audit trail data
+
             editCreatedBy.textContent = employeeData.created_by || '-';
             editCreatedAt.textContent = employeeData.created_at_formatted || employeeData.created_at || '-';
             editUpdatedBy.textContent = employeeData.updated_by || 'Never';
             editUpdatedAt.textContent = employeeData.updated_at_formatted || employeeData.updated_at || 'Never';
-            
+
             updateEditFullName();
+
+            // Reset image UI
+            const newPrev = document.getElementById('edit_new_image_preview');
+            if (newPrev) newPrev.innerHTML = '';
+            const editImgInput = document.getElementById('edit_employee_image');
+            if (editImgInput) editImgInput.value = '';
             
+            // Reset removal hidden input
+            const removeInput = document.getElementById('edit_remove_image');
+            if (removeInput) removeInput.value = '0';
+
+            // Load existing image
+            loadExistingEmployeeImage(employeeData.employee_code);
+
             editModal.style.display = 'flex';
         });
+    });
+
+    // Edit modal image preview (new file)
+    const editImageInput = document.getElementById('edit_employee_image');
+    editImageInput?.addEventListener('change', function () {
+        const container = document.getElementById('edit_new_image_preview');
+        container.innerHTML = '';
+        if (this.files && this.files[0]) {
+            const file = this.files[0];
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const div = document.createElement('div');
+                div.className = 'employee-image-preview-item';
+                div.innerHTML = `<img src="${e.target.result}" alt="preview">`;
+                container.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        }
     });
 
     function closeEditModal() {
@@ -1016,7 +1292,7 @@ $common_positions = [
         if (e.target === editModal) closeEditModal();
     });
 
-    // ── Escape key closes all modals ────────────────────────────
+    // Escape closes
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             if (addModal?.style.display === 'flex') closeAddEmployeeModal();

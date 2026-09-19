@@ -1,7 +1,9 @@
 <?php
 // get_print_status.php
 session_start();
-include '../config/config.php';
+
+require_once __DIR__ . '/../config/config.php';
+
 
 // Set JSON response header
 header('Content-Type: application/json');

@@ -3,7 +3,7 @@ session_start();
 date_default_timezone_set('Asia/Manila');
 
 require_once __DIR__ . '/../config/config.php';
-require_once __DIR__ . '/../config/access_control.php'; // Include centralized access control
+require_once __DIR__ . '/../config/access_control.php';
 
 // Get user data
 if (!isset($_SESSION['user_id'])) {
@@ -14,15 +14,11 @@ if (!isset($_SESSION['user_id'])) {
 $user_id    = $_SESSION['user_id'];
 $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Admin';
-$full_name = $_SESSION['full_name'] ?? $username;
+$full_name  = $_SESSION['full_name'] ?? $username;
 
-// Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
+$is_admin   = in_array('admin', $user_roles);
 
-// Define base role - if 'admin' exists, user is admin
-$is_admin = in_array('admin', $user_roles);
-
-// Check if user has access to items page (view only for purchase_order_maker)
 $can_access_items = $is_admin || in_array('user', $user_roles) || in_array('purchase_order_maker', $user_roles) || in_array('item_register', $user_roles);
 
 if (!$can_access_items) {
@@ -34,31 +30,136 @@ if (!$can_access_items) {
     exit;
 }
 
-// Check if user can add/edit items (admin, user, and item_register roles)
 $can_manage_items = $is_admin || in_array('user', $user_roles) || in_array('item_register', $user_roles);
 
-// Define allowed pages based on roles - Now using centralized $allowed_pages from access_control.php
-
-// Function to check if user has access to a specific page - Now using centralized hasAccess() function
-
-// Function to get display name for roles - Now using centralized getRoleDisplayName() function
-
 $role_display_name = getRoleDisplayName($user_roles);
-
-// Set current page for sidebar
 $current_page = basename($_SERVER['PHP_SELF']);
+
+// ============================================================
+// IMAGE UPLOAD CONFIGURATION
+// ============================================================
+define('ITEM_IMAGE_DIR', __DIR__ . '/../uploads/items_images/');
+define('ITEM_IMAGE_URL', '../uploads/items_images/');
+define('MAX_ITEM_IMAGES', 3);
+
+$allowed_image_ext = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+// Helper: Save uploaded images for an item
+function saveItemImages($conn, $item_code, $item_name, $files) {
+    global $allowed_image_ext;
+
+    $saved  = [];
+    $errors = [];
+
+    if (empty($files['name'][0])) {
+        return ['saved' => $saved, 'errors' => $errors];
+    }
+
+    if (!is_dir(ITEM_IMAGE_DIR)) {
+        if (!mkdir(ITEM_IMAGE_DIR, 0755, true)) {
+            return ['saved' => [], 'errors' => ['Failed to create upload directory.']];
+        }
+    }
+
+    $count = count($files['name']);
+    if ($count > MAX_ITEM_IMAGES) {
+        return ['saved' => [], 'errors' => ['Maximum of ' . MAX_ITEM_IMAGES . ' images allowed per upload.']];
+    }
+
+    // Get current session username for created_by
+    $created_by = $_SESSION['username'] ?? 'Unknown';
+
+    for ($i = 0; $i < $count; $i++) {
+        if ($files['error'][$i] !== UPLOAD_ERR_OK) {
+            if ($files['error'][$i] !== UPLOAD_ERR_NO_FILE) {
+                $errors[] = "Error uploading file: " . htmlspecialchars($files['name'][$i]);
+            }
+            continue;
+        }
+
+        $tmp_name  = $files['tmp_name'][$i];
+        $orig_name = $files['name'][$i];
+        $ext       = strtolower(pathinfo($orig_name, PATHINFO_EXTENSION));
+
+        if (!in_array($ext, $allowed_image_ext)) {
+            $errors[] = "Invalid file type: " . htmlspecialchars($orig_name);
+            continue;
+        }
+
+        $check = @getimagesize($tmp_name);
+        if ($check === false) {
+            $errors[] = "File is not a valid image: " . htmlspecialchars($orig_name);
+            continue;
+        }
+
+        $safe_code = preg_replace('/[^A-Za-z0-9_\-]/', '_', $item_code);
+        $filename  = $safe_code . '_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+        $target    = ITEM_IMAGE_DIR . $filename;
+
+        if (move_uploaded_file($tmp_name, $target)) {
+            // Asia/Manila datetime
+            $created_at = date('Y-m-d H:i:s');
+
+            $stmt = mysqli_prepare($conn, "INSERT INTO item_images (item_code, item_name, item_image, created_at, created_by) VALUES (?, ?, ?, ?, ?)");
+            mysqli_stmt_bind_param($stmt, "sssss", $item_code, $item_name, $filename, $created_at, $created_by);
+            if (mysqli_stmt_execute($stmt)) {
+                $saved[] = $filename;
+            } else {
+                @unlink($target);
+                $errors[] = "DB insert failed for " . htmlspecialchars($orig_name);
+            }
+            mysqli_stmt_close($stmt);
+        } else {
+            $errors[] = "Failed to save " . htmlspecialchars($orig_name);
+        }
+    }
+
+    return ['saved' => $saved, 'errors' => $errors];
+}
+
+// Helper: Fetch existing images for an item
+function getItemImages($conn, $item_code) {
+    $images = [];
+    $stmt = mysqli_prepare($conn, "SELECT id, item_image, created_at, created_by FROM item_images WHERE item_code = ? ORDER BY id ASC");
+    mysqli_stmt_bind_param($stmt, "s", $item_code);
+    mysqli_stmt_execute($stmt);
+    $res = mysqli_stmt_get_result($stmt);
+    while ($row = mysqli_fetch_assoc($res)) {
+        $images[] = $row;
+    }
+    mysqli_stmt_close($stmt);
+    return $images;
+}
+
+// Helper: Delete a single image record and file
+function deleteItemImage($conn, $image_id) {
+    $stmt = mysqli_prepare($conn, "SELECT item_image FROM item_images WHERE id = ? LIMIT 1");
+    mysqli_stmt_bind_param($stmt, "i", $image_id);
+    mysqli_stmt_execute($stmt);
+    $res = mysqli_stmt_get_result($stmt);
+    if ($row = mysqli_fetch_assoc($res)) {
+        $file = ITEM_IMAGE_DIR . $row['item_image'];
+        if (file_exists($file)) @unlink($file);
+    }
+    mysqli_stmt_close($stmt);
+
+    $del = mysqli_prepare($conn, "DELETE FROM item_images WHERE id = ?");
+    mysqli_stmt_bind_param($del, "i", $image_id);
+    mysqli_stmt_execute($del);
+    mysqli_stmt_close($del);
+}
 
 // Helper function to uppercase text fields
 function uppercaseFields($data) {
-    $uppercase_fields = ['item_name', 'category', 'subcategory', 'description', 'brand', 
+    $uppercase_fields = ['item_name', 'category', 'subcategory', 'description', 'brand',
                          'part_number', 'compatible_models', 'unit_of_measure', 'location_bin', 'notes'];
-    
+
     foreach ($uppercase_fields as $field) {
         if (isset($data[$field]) && !empty($data[$field])) {
             $data[$field] = strtoupper(trim($data[$field]));
         }
     }
-    
+
     return $data;
 }
 
@@ -115,7 +216,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
         'notes'              => trim($_POST['notes'] ?? ''),
     ];
 
-    // Apply uppercase transformation to text fields
     $fields = uppercaseFields($fields);
 
     $required = ['item_code', 'item_name', 'category', 'unit_of_measure'];
@@ -131,7 +231,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
         $message = implode("<br>", $errors);
         $message_type = 'error';
     } else {
-        // Check for duplicate item code
         $duplicate_query = "SELECT id FROM item_masterlist WHERE item_code = ? LIMIT 1";
         $dup_stmt = mysqli_prepare($conn, $duplicate_query);
         mysqli_stmt_bind_param($dup_stmt, "s", $fields['item_code']);
@@ -144,80 +243,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_item'])) {
             mysqli_stmt_close($dup_stmt);
         } else {
             mysqli_stmt_close($dup_stmt);
-            
+
             $created_by   = $_SESSION['username'];
             $created_at   = date('Y-m-d H:i:s');
             $last_updated_stock = date('Y-m-d');
 
             $insert_query = "
-    INSERT INTO item_masterlist (
-        item_code, item_name, category, subcategory, description,
-        brand, part_number, compatible_models, unit_of_measure,
-        purchase_price, selling_price, reorder_point,
-        reorder_quantity, current_stock, min_stock, location_bin,
-        status, last_updated_stock, notes, created_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-";
+                INSERT INTO item_masterlist (
+                    item_code, item_name, category, subcategory, description,
+                    brand, part_number, compatible_models, unit_of_measure,
+                    purchase_price, selling_price, reorder_point,
+                    reorder_quantity, current_stock, min_stock, location_bin,
+                    status, last_updated_stock, notes, created_at, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ";
 
-$stmt = mysqli_prepare($conn, $insert_query);
+            $stmt = mysqli_prepare($conn, $insert_query);
             if (!$stmt) {
                 $message = "Database prepare error: " . mysqli_error($conn);
                 $message_type = 'error';
             } else {
                 $purchase_price   = (float)$fields['purchase_price'];
-$selling_price    = (float)$fields['selling_price'];
-$reorder_point    = (int)$fields['reorder_point'];
-$reorder_quantity = (int)$fields['reorder_quantity'];
-$current_stock    = (int)$fields['current_stock'];
-$min_stock        = (int)$fields['min_stock'];
-$status           = (int)$fields['status'];
+                $selling_price    = (float)$fields['selling_price'];
+                $reorder_point    = (int)$fields['reorder_point'];
+                $reorder_quantity = (int)$fields['reorder_quantity'];
+                $current_stock    = (int)$fields['current_stock'];
+                $min_stock        = (int)$fields['min_stock'];
+                $status           = (int)$fields['status'];
 
-mysqli_stmt_bind_param(
-    $stmt,
-    "sssssssssddiiiisissss",
-    $fields['item_code'],
-    $fields['item_name'],
-    $fields['category'],
-    $fields['subcategory'],
-    $fields['description'],
-    $fields['brand'],
-    $fields['part_number'],
-    $fields['compatible_models'],
-    $fields['unit_of_measure'],
-    $purchase_price,
-    $selling_price,
-    $reorder_point,
-    $reorder_quantity,
-    $current_stock,
-    $min_stock,
-    $fields['location_bin'],
-    $status,
-    $last_updated_stock,
-    $fields['notes'],
-    $created_at,
-    $created_by
-);
+                mysqli_stmt_bind_param(
+                    $stmt,
+                    "sssssssssddiiiisissss",
+                    $fields['item_code'],
+                    $fields['item_name'],
+                    $fields['category'],
+                    $fields['subcategory'],
+                    $fields['description'],
+                    $fields['brand'],
+                    $fields['part_number'],
+                    $fields['compatible_models'],
+                    $fields['unit_of_measure'],
+                    $purchase_price,
+                    $selling_price,
+                    $reorder_point,
+                    $reorder_quantity,
+                    $current_stock,
+                    $min_stock,
+                    $fields['location_bin'],
+                    $status,
+                    $last_updated_stock,
+                    $fields['notes'],
+                    $created_at,
+                    $created_by
+                );
 
-            } // end prepare success check
+                if (mysqli_stmt_execute($stmt)) {
+                    $message = "Item <strong>" . htmlspecialchars($fields['item_name']) . "</strong> added successfully!";
+                    $message_type = 'success';
 
-            if (mysqli_stmt_execute($stmt)) {
-                $message = "Item <strong>" . htmlspecialchars($fields['item_name']) . "</strong> added successfully!";
-                $message_type = 'success';
-                
-                // Update next code
-                $code_result = mysqli_query($conn, $code_query);
-                if ($code_result && $row = mysqli_fetch_assoc($code_result)) {
-                    if (preg_match('/^ITM-(\d+)$/', $row['item_code'], $matches)) {
-                        $last_number = (int)$matches[1];
-                        $next_number = $last_number + 1;
-                        $next_code   = sprintf('ITM-%03d', $next_number);
+                    // Handle image uploads
+                    if (!empty($_FILES['item_images']['name'][0])) {
+                        $imgResult = saveItemImages($conn, $fields['item_code'], $fields['item_name'], $_FILES['item_images']);
+                        if (!empty($imgResult['errors'])) {
+                            $message .= "<br>Image warnings: " . implode("<br>", $imgResult['errors']);
+                            $message_type = 'warning';
+                        }
+                        if (!empty($imgResult['saved'])) {
+                            $message .= "<br>" . count($imgResult['saved']) . " image(s) uploaded.";
+                        }
                     }
+
+                    // Update next code
+                    $code_result = mysqli_query($conn, $code_query);
+                    if ($code_result && $row = mysqli_fetch_assoc($code_result)) {
+                        if (preg_match('/^ITM-(\d+)$/', $row['item_code'], $matches)) {
+                            $last_number = (int)$matches[1];
+                            $next_number = $last_number + 1;
+                            $next_code   = sprintf('ITM-%03d', $next_number);
+                        }
+                    }
+                } else {
+                    $message = "Database error: " . mysqli_error($conn);
+                    $message_type = 'error';
                 }
-            } else {
-                $message = "Database error: " . mysqli_error($conn);
-                $message_type = 'error';
+                mysqli_stmt_close($stmt);
             }
-            mysqli_stmt_close($stmt);
         }
     }
 }
@@ -225,7 +335,7 @@ mysqli_stmt_bind_param(
 // Handle Edit Item Submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_item'])) {
     $item_id = intval($_POST['item_id']);
-    
+
     $fields = [
         'item_name'          => trim($_POST['item_name'] ?? ''),
         'category'           => trim($_POST['category'] ?? ''),
@@ -246,7 +356,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_item'])) {
         'notes'              => trim($_POST['notes'] ?? ''),
     ];
 
-    // Apply uppercase transformation to text fields
     $fields = uppercaseFields($fields);
 
     $required = ['item_name', 'category', 'unit_of_measure'];
@@ -308,8 +417,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_item'])) {
         );
 
         if (mysqli_stmt_execute($stmt)) {
+            // Get current item_code for image operations
+            $cur_stmt = mysqli_prepare($conn, "SELECT item_code FROM item_masterlist WHERE id = ? LIMIT 1");
+            mysqli_stmt_bind_param($cur_stmt, "i", $item_id);
+            mysqli_stmt_execute($cur_stmt);
+            $cur_res = mysqli_stmt_get_result($cur_stmt);
+            $cur_row = mysqli_fetch_assoc($cur_res);
+            $current_item_code = $cur_row['item_code'] ?? '';
+            mysqli_stmt_close($cur_stmt);
+
+            // Delete marked images
+            if (!empty($_POST['delete_images']) && is_array($_POST['delete_images'])) {
+                foreach ($_POST['delete_images'] as $img_id) {
+                    deleteItemImage($conn, (int)$img_id);
+                }
+            }
+
             $message = "Item <strong>" . htmlspecialchars($fields['item_name']) . "</strong> updated successfully!";
             $message_type = 'success';
+
+            // Handle new image uploads
+            if (!empty($_FILES['item_images']['name'][0])) {
+                $existing  = getItemImages($conn, $current_item_code);
+                $remaining = MAX_ITEM_IMAGES - count($existing);
+                if ($remaining <= 0) {
+                    $message .= "<br>Image limit reached (" . MAX_ITEM_IMAGES . "). No new images uploaded.";
+                    $message_type = 'warning';
+                } else {
+                    $files = $_FILES['item_images'];
+                    $limited = ['name' => [], 'type' => [], 'tmp_name' => [], 'error' => [], 'size' => []];
+                    for ($i = 0; $i < min(count($files['name']), $remaining); $i++) {
+                        foreach ($files as $k => $v) $limited[$k][] = $v[$i];
+                    }
+                    $imgResult = saveItemImages($conn, $current_item_code, $fields['item_name'], $limited);
+                    if (!empty($imgResult['errors'])) {
+                        $message .= "<br>Image warnings: " . implode("<br>", $imgResult['errors']);
+                        $message_type = 'warning';
+                    }
+                    if (!empty($imgResult['saved'])) {
+                        $message .= "<br>" . count($imgResult['saved']) . " image(s) uploaded.";
+                    }
+                }
+            }
         } else {
             $message = "Database error: " . mysqli_error($conn);
             $message_type = 'error';
@@ -351,8 +500,6 @@ $result = mysqli_query($conn, $query);
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
     <link rel="stylesheet" href="css/items.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
-    
-  
 </head>
 <body>
 
@@ -389,7 +536,6 @@ $result = mysqli_query($conn, $query);
             </div>
         <?php endif; ?>
 
-        <!-- Permission Notice for View-Only Users -->
         <?php if (!$can_manage_items): ?>
             <div class="permission-notice">
                 <i data-lucide="eye"></i>
@@ -399,16 +545,15 @@ $result = mysqli_query($conn, $query);
 
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; flex-wrap: wrap; gap: 16px;">
             <h1 style="font-size: 26px; font-weight: 600; margin: 0;">Items Directory</h1>
-            
+
             <div class="header-actions">
-                <!-- Search Bar -->
                 <form method="GET" action="" style="flex: 1; min-width: 200px;">
                     <div class="search-container">
                         <i data-lucide="search"></i>
-                        <input 
-                            type="text" 
-                            name="search" 
-                            placeholder="Search by Code, Name, Brand..." 
+                        <input
+                            type="text"
+                            name="search"
+                            placeholder="Search by Code, Name, Brand..."
                             value="<?php echo htmlspecialchars($search_term); ?>"
                             id="searchInput"
                             autocomplete="off"
@@ -418,7 +563,7 @@ $result = mysqli_query($conn, $query);
                         </button>
                     </div>
                 </form>
-                
+
                 <div style="display: flex; gap: 12px;">
                     <a href="item_issuance.php" class="btn btn-secondary" style="display:flex; align-items:center; gap:8px; text-decoration: none;">
                         <i data-lucide="clipboard-list" style="width:18px;"></i> Item Issuance
@@ -427,17 +572,14 @@ $result = mysqli_query($conn, $query);
                     <button id="openAddModal" class="btn btn-primary" style="display:flex; align-items:center; gap:8px; white-space: nowrap;">
                         <i data-lucide="plus" style="width:18px;"></i> Add Item
                     </button>
-                    <?php else: ?>
-                    <!-- <span class="view-only-text">View Only</span> -->
                     <?php endif; ?>
                 </div>
             </div>
         </div>
 
-        <!-- Search Results Info -->
         <?php if (!empty($search_term)): ?>
             <div class="search-results-info">
-                Showing results for "<strong><?php echo htmlspecialchars($search_term); ?></strong>" 
+                Showing results for "<strong><?php echo htmlspecialchars($search_term); ?></strong>"
                 (<?php echo mysqli_num_rows($result); ?> found)
                 <a href="items.php" style="color: var(--accent-blue); text-decoration: none; margin-left: 8px; font-weight: 500;">
                     Clear search
@@ -462,8 +604,7 @@ $result = mysqli_query($conn, $query);
                 <tbody>
                     <?php if (mysqli_num_rows($result) > 0): ?>
                         <?php while ($row = mysqli_fetch_assoc($result)): ?>
-                            <?php 
-                                // Stock styling: black for normal numbers, red if 0
+                            <?php
                                 $stockClass = ($row['current_stock'] == 0) ? 'stock-zero' : 'stock-normal';
                             ?>
                             <tr data-item-id="<?php echo $row['id']; ?>">
@@ -490,15 +631,13 @@ $result = mysqli_query($conn, $query);
                                     </span>
                                 </td>
                                 <td>
-                                    <?php if ($can_manage_items): ?>
                                     <button class="action-btn edit-btn" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($row)); ?>)">
-                                        <i data-lucide="edit-2" style="width:18px;"></i> View / Edit
+                                        <?php if ($can_manage_items): ?>
+                                            <i data-lucide="edit-2" style="width:18px;"></i> View / Edit
+                                        <?php else: ?>
+                                            <i data-lucide="eye" style="width:18px;"></i> View
+                                        <?php endif; ?>
                                     </button>
-                                    <?php else: ?>
-                                    <button class="action-btn edit-btn" onclick="openEditModal(<?php echo htmlspecialchars(json_encode($row)); ?>)">
-                                        <i data-lucide="eye" style="width:18px;"></i> View
-                                    </button>
-                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endwhile; ?>
@@ -533,18 +672,18 @@ $result = mysqli_query($conn, $query);
             <button id="closeModal" style="background:#f1f5f9; border:none; width:32px; height:32px; border-radius:50%; cursor:pointer; color:#64748b; display:flex; align-items:center; justify-content:center;">×</button>
         </div>
 
-        <form method="POST" action="" id="addItemForm">
+        <form method="POST" action="" id="addItemForm" enctype="multipart/form-data">
             <div class="modal-body">
                 <div class="form-grid">
                     <div class="form-section">
                         <i data-lucide="info" style="width:16px;"></i> Basic Information
                     </div>
-                    
+
                     <div class="form-group col-2">
                         <label>Item Code <span class="required">*</span></label>
                         <input type="text" name="item_code" id="item_code" value="<?php echo htmlspecialchars($next_code); ?>" required style="background:#f8fafc; font-weight:600;" readonly>
                     </div>
-                    
+
                     <div class="form-group col-4">
                         <label>Item Name <span class="required">*</span></label>
                         <div class="autocomplete-container">
@@ -566,6 +705,8 @@ $result = mysqli_query($conn, $query);
                             <option value="Consumables">Consumables</option>
                             <option value="Accessories">Accessories</option>
                             <option value="Services">Services</option>
+                            <option value="Lubricants">Lubricants</option>
+
                         </select>
                     </div>
 
@@ -661,6 +802,16 @@ $result = mysqli_query($conn, $query);
                         </select>
                     </div>
 
+                    <div class="form-section">
+                        <i data-lucide="image" style="width:16px;"></i> Item Images <small style="font-weight:400; text-transform:none; color:#64748b;">(max 3, jpg/png/gif/webp)</small>
+                    </div>
+
+                    <div class="form-group col-6" style="grid-column: span 6;">
+                        <label>Attach Images</label>
+                        <input type="file" name="item_images[]" id="add_item_images" accept="image/*" multiple>
+                        <div id="add_image_preview" class="image-preview-grid"></div>
+                    </div>
+
                     <div class="form-group col-6">
                         <label>Internal Notes</label>
                         <textarea name="notes" id="notes" rows="2" placeholder="Any additional information..."></textarea>
@@ -686,19 +837,19 @@ $result = mysqli_query($conn, $query);
             <button id="closeEditModal" style="background:#f1f5f9; border:none; width:32px; height:32px; border-radius:50%; cursor:pointer; color:#64748b; display:flex; align-items:center; justify-content:center;">×</button>
         </div>
 
-        <form method="POST" action="" id="editForm">
+        <form method="POST" action="" id="editForm" enctype="multipart/form-data">
             <input type="hidden" name="item_id" id="edit_item_id">
             <div class="modal-body">
                 <div class="form-grid">
                     <div class="form-section">
                         <i data-lucide="info" style="width:16px;"></i> Basic Information
                     </div>
-                    
+
                     <div class="form-group col-2">
                         <label>Item Code</label>
                         <input type="text" id="edit_item_code" disabled style="background:#f8fafc; font-weight:600;">
                     </div>
-                    
+
                     <div class="form-group col-4">
                         <label>Item Name <span class="required">*</span></label>
                         <input type="text" name="item_name" id="edit_item_name" required placeholder="Enter item name">
@@ -707,14 +858,16 @@ $result = mysqli_query($conn, $query);
                     <div class="form-group col-2">
                         <label>Category <span class="required">*</span></label>
                         <select name="category" id="edit_category" required>
-                            <option value="">Select Category</option>
-                            <option value="Spare Parts">Spare Parts</option>
-                            <option value="Equipment">Equipment</option>
-                            <option value="Tools">Tools</option>
-                            <option value="Consumables">Consumables</option>
-                            <option value="Accessories">Accessories</option>
-                            <option value="Services">Services</option>
-                        </select>
+    <option value="">Select Category</option>
+    <option value="SPARE PARTS">Spare Parts</option>
+    <option value="EQUIPMENT">Equipment</option>
+    <option value="TOOLS">Tools</option>
+    <option value="CONSUMABLES">Consumables</option>
+    <option value="ACCESSORIES">Accessories</option>
+    <option value="SERVICES">Services</option>
+    <option value="LUBRICANTS">Lubricants</option>
+
+</select>
                     </div>
 
                     <div class="form-group col-2">
@@ -735,15 +888,15 @@ $result = mysqli_query($conn, $query);
                     <div class="form-group col-2">
                         <label>Unit of Measure <span class="required">*</span></label>
                         <select name="unit_of_measure" id="edit_unit_of_measure" required>
-                            <option value="">Select Unit</option>
-                            <option value="pcs">Pieces (pcs)</option>
-                            <option value="box">Box</option>
-                            <option value="set">Set</option>
-                            <option value="kg">Kilogram (kg)</option>
-                            <option value="ltr">Liter (ltr)</option>
-                            <option value="mtr">Meter (mtr)</option>
-                            <option value="pack">Pack</option>
-                        </select>
+    <option value="">Select Unit</option>
+    <option value="PCS">Pieces (pcs)</option>
+    <option value="BOX">Box</option>
+    <option value="SET">Set</option>
+    <option value="KG">Kilogram (kg)</option>
+    <option value="LTR">Liter (ltr)</option>
+    <option value="MTR">Meter (mtr)</option>
+    <option value="PACK">Pack</option>
+</select>
                     </div>
 
                     <div class="form-group col-6">
@@ -809,6 +962,23 @@ $result = mysqli_query($conn, $query);
                         </select>
                     </div>
 
+                    <div class="form-section">
+                        <i data-lucide="image" style="width:16px;"></i> Item Images <small style="font-weight:400; text-transform:none; color:#64748b;">(max 3 total)</small>
+                    </div>
+
+                    <div class="form-group col-6" style="grid-column: span 6;">
+                        <label>Existing Images</label>
+                        <div id="edit_existing_images" class="image-preview-grid">
+                            <div style="color:#94a3b8; font-size:12px;">No images attached.</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group col-6" style="grid-column: span 6;">
+                        <label>Add New Images</label>
+                        <input type="file" name="item_images[]" id="edit_item_images" accept="image/*" multiple>
+                        <div id="edit_new_image_preview" class="image-preview-grid"></div>
+                    </div>
+
                     <div class="form-group col-6">
                         <label>Internal Notes</label>
                         <textarea name="notes" id="edit_notes" rows="2" placeholder="Any additional information..."></textarea>
@@ -827,30 +997,17 @@ $result = mysqli_query($conn, $query);
 <script>
     lucide.createIcons();
 
-    // User roles from PHP
     const userRoles = <?php echo json_encode($user_roles); ?>;
-    
-    // Allowed pages from PHP
     const allowedPages = <?php echo json_encode($allowed_pages); ?>;
-    
-    // Can manage items flag
     const canManageItems = <?php echo $can_manage_items ? 'true' : 'false'; ?>;
-    
-    // Modal element
+
     const modal = document.getElementById('accessModal');
 
-    // Check access function
     function checkAccess(page) {
-        if (userRoles.includes('admin')) {
-            return true;
-        }
-        
+        if (userRoles.includes('admin')) return true;
         for (let role of userRoles) {
-            if (allowedPages[role] && allowedPages[role].includes(page)) {
-                return true;
-            }
+            if (allowedPages[role] && allowedPages[role].includes(page)) return true;
         }
-        
         modal.style.display = 'flex';
         return false;
     }
@@ -860,9 +1017,7 @@ $result = mysqli_query($conn, $query);
     }
 
     modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeModal();
-        }
+        if (e.target === modal) closeModal();
     });
 
     document.addEventListener('keydown', function(e) {
@@ -877,17 +1032,10 @@ $result = mysqli_query($conn, $query);
     // UPPERCASE INPUT HANDLING
     // ============================================================
 
-    // Function to apply uppercase to text inputs (excluding number and date fields)
     function applyUppercaseToInputs() {
-        // Get all text inputs, textareas (excluding number, date, hidden, checkbox, radio)
-        const inputs = document.querySelectorAll('input:not([type="hidden"]):not([type="date"]):not([type="checkbox"]):not([type="radio"]):not([type="number"]):not([type="email"]), textarea');
-        
+        const inputs = document.querySelectorAll('input:not([type="hidden"]):not([type="date"]):not([type="checkbox"]):not([type="radio"]):not([type="number"]):not([type="email"]):not([type="file"]), textarea');
         inputs.forEach(input => {
-            // Skip number inputs
-            if (input.type === 'number') {
-                return;
-            }
-            
+            if (input.type === 'number') return;
             input.addEventListener('input', function(e) {
                 if (this.placeholder) {
                     const start = this.selectionStart;
@@ -899,7 +1047,6 @@ $result = mysqli_query($conn, $query);
         });
     }
 
-    // Apply uppercase to search input specifically
     function applyUppercaseToSearch() {
         const searchInput = document.getElementById('searchInput');
         if (searchInput) {
@@ -912,15 +1059,13 @@ $result = mysqli_query($conn, $query);
         }
     }
 
-    // Apply transformations to all inputs within modals (add and edit)
     function applyTransformationsToModalInputs() {
         const addModal = document.getElementById('addItemModal');
         const editModal = document.getElementById('editItemModal');
-        
+
         [addModal, editModal].forEach(modal => {
             if (modal) {
-                // Uppercase for non-number fields
-                const inputs = modal.querySelectorAll('input:not([type="hidden"]):not([type="date"]):not([type="checkbox"]):not([type="radio"]):not([type="number"]):not([type="email"]), textarea');
+                const inputs = modal.querySelectorAll('input:not([type="hidden"]):not([type="date"]):not([type="checkbox"]):not([type="radio"]):not([type="number"]):not([type="email"]):not([type="file"]), textarea');
                 inputs.forEach(input => {
                     input.addEventListener('input', function() {
                         const start = this.selectionStart;
@@ -933,9 +1078,8 @@ $result = mysqli_query($conn, $query);
         });
     }
 
-    // Function to convert data to uppercase when populating edit form
     function toUpperCaseData(data) {
-        const uppercaseFields = ['item_name', 'category', 'subcategory', 'description', 'brand', 
+        const uppercaseFields = ['item_name', 'category', 'subcategory', 'description', 'brand',
                                   'part_number', 'compatible_models', 'unit_of_measure', 'location_bin', 'notes'];
         const result = {...data};
         uppercaseFields.forEach(field => {
@@ -946,13 +1090,11 @@ $result = mysqli_query($conn, $query);
         return result;
     }
 
-    // Apply transformations to all input fields on the page
     document.addEventListener('DOMContentLoaded', function() {
         applyUppercaseToInputs();
         applyUppercaseToSearch();
         applyTransformationsToModalInputs();
-        
-        // Also apply to dynamically created elements
+
         const observer = new MutationObserver(function(mutations) {
             mutations.forEach(function(mutation) {
                 if (mutation.addedNodes.length > 0) {
@@ -960,11 +1102,11 @@ $result = mysqli_query($conn, $query);
                 }
             });
         });
-        
+
         observer.observe(document.body, { childList: true, subtree: true });
     });
 
-    // ── Alert Message Auto-hide and Close ────────────────────────
+    // ── Alert Message Auto-hide ────────────────────────────────
     function dismissAlert() {
         const alert = document.getElementById('alertMessage');
         if (alert) {
@@ -975,18 +1117,14 @@ $result = mysqli_query($conn, $query);
         }
     }
 
-    // Auto-hide alert after 3 seconds
     document.addEventListener('DOMContentLoaded', function() {
         const alert = document.getElementById('alertMessage');
         if (alert) {
-            // Check if it's a success message - refresh after hiding
             const isSuccess = alert.classList.contains('alert-success');
-            
             setTimeout(function() {
                 alert.classList.add('fade-out');
                 setTimeout(function() {
                     alert.style.display = 'none';
-                    // If success, refresh the page to show updated data
                     if (isSuccess) {
                         window.location.href = window.location.pathname;
                     }
@@ -1000,19 +1138,16 @@ $result = mysqli_query($conn, $query);
     const clearBtn = document.getElementById('clearSearch');
     const searchForm = searchInput?.closest('form');
 
-    // Auto-submit on input (with debounce)
     let searchTimeout;
     searchInput?.addEventListener('input', function() {
-        // Convert search input to uppercase
         const start = this.selectionStart;
         const end = this.selectionEnd;
         this.value = this.value.toUpperCase();
         this.setSelectionRange(start, end);
-        
+
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             if (this.value.trim() === '' && window.location.search.includes('search=')) {
-                // If search is cleared, redirect to remove search param
                 window.location.href = window.location.pathname;
             } else if (this.value.trim() !== '') {
                 searchForm?.submit();
@@ -1020,14 +1155,12 @@ $result = mysqli_query($conn, $query);
         }, 300);
     });
 
-    // Clear button functionality
     clearBtn?.addEventListener('click', function() {
         searchInput.value = '';
         this.classList.remove('visible');
         window.location.href = window.location.pathname;
     });
 
-    // Show/hide clear button based on input value
     searchInput?.addEventListener('input', function() {
         if (this.value.trim() !== '') {
             clearBtn?.classList.add('visible');
@@ -1036,7 +1169,6 @@ $result = mysqli_query($conn, $query);
         }
     });
 
-    // Submit on Enter key
     searchInput?.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -1057,7 +1189,6 @@ $result = mysqli_query($conn, $query);
     ];
 
     function openAddModal() {
-        // Check if user can add items
         if (!canManageItems) {
             alert('You are in view-only mode. You cannot add items.');
             return;
@@ -1076,6 +1207,9 @@ $result = mysqli_query($conn, $query);
         document.getElementById('item_code').value = '<?php echo $next_code; ?>';
         document.getElementById('autocomplete-list').classList.remove('show');
         document.getElementById('autofetch-indicator').classList.remove('show');
+        document.getElementById('add_image_preview').innerHTML = '';
+        const inp = document.getElementById('add_item_images');
+        if (inp) inp.value = '';
         selectedItemData = null;
     }
 
@@ -1120,21 +1254,20 @@ $result = mysqli_query($conn, $query);
     }
 
     itemNameInput.addEventListener('input', function(e) {
-        // Convert to uppercase as user types
         const start = this.selectionStart;
         const end = this.selectionEnd;
         this.value = this.value.toUpperCase();
         this.setSelectionRange(start, end);
-        
+
         const searchValue = this.value.trim();
-        
+
         if (searchValue.length === 0) {
             autocompleteList.classList.remove('show');
             autofetchIndicator.classList.remove('show');
             return;
         }
 
-        const matches = itemNames.filter(name => 
+        const matches = itemNames.filter(name =>
             name.toLowerCase().includes(searchValue.toLowerCase())
         );
 
@@ -1151,7 +1284,7 @@ $result = mysqli_query($conn, $query);
                 </div>
             `;
         });
-        
+
         autocompleteList.innerHTML = html;
         autocompleteList.classList.add('show');
     });
@@ -1170,16 +1303,15 @@ $result = mysqli_query($conn, $query);
         fetchItemData(itemName)
             .then(data => {
                 if (data) {
-                    // Convert data to uppercase
                     document.getElementById('item_code').value = data.item_code || '';
                     document.getElementById('category').value = data.category ? data.category.toUpperCase() : '';
                     document.getElementById('subcategory').value = data.subcategory ? data.subcategory.toUpperCase() : '';
-                    
+
                     selectedItemData = data;
-                    
+
                     autofetchIndicator.innerHTML = '<i data-lucide="check-circle" style="width:12px; display:inline;"></i> Auto-filled: Item Code, Category, and Subcategory from existing item';
                     autofetchIndicator.classList.add('show');
-                    
+
                     lucide.createIcons();
                 } else {
                     autofetchIndicator.classList.remove('show');
@@ -1216,10 +1348,9 @@ $result = mysqli_query($conn, $query);
         document.getElementById('closeEditModalBtn')
     ];
 
-    // Function to set form fields to readonly
     function setItemFormReadonly(isReadonly) {
         const form = document.getElementById('editForm');
-        const inputs = form.querySelectorAll('input:not([type="hidden"]), select, textarea');
+        const inputs = form.querySelectorAll('input:not([type="hidden"]):not([type="file"]), select, textarea');
         inputs.forEach(input => {
             if (isReadonly) {
                 input.setAttribute('readonly', 'readonly');
@@ -1235,19 +1366,26 @@ $result = mysqli_query($conn, $query);
                 }
             }
         });
-        
-        // Hide/show required asterisks
+
         const requiredStars = document.querySelectorAll('#editForm .required');
         requiredStars.forEach(star => {
             star.style.display = isReadonly ? 'none' : 'inline';
         });
+
+        // Hide image upload input if readonly
+        const editImgInput = document.getElementById('edit_item_images');
+        if (editImgInput) {
+            editImgInput.style.display = isReadonly ? 'none' : '';
+            const lbl = editImgInput.previousElementSibling;
+            if (lbl && lbl.tagName === 'LABEL') {
+                lbl.style.display = isReadonly ? 'none' : '';
+            }
+        }
     }
 
     function openEditModal(itemData) {
-        // Convert data to uppercase before populating
         const data = toUpperCaseData(itemData);
-        
-        // Set mode based on permissions
+
         if (!canManageItems) {
             document.getElementById('editModalTitle').textContent = 'View Item';
             setItemFormReadonly(true);
@@ -1257,8 +1395,7 @@ $result = mysqli_query($conn, $query);
             setItemFormReadonly(false);
             document.getElementById('editModalFooter').style.display = 'flex';
         }
-        
-        // Populate all form fields with uppercase data
+
         document.getElementById('edit_item_id').value = data.id;
         document.getElementById('edit_item_code').value = data.item_code;
         document.getElementById('edit_item_name').value = data.item_name || '';
@@ -1278,10 +1415,19 @@ $result = mysqli_query($conn, $query);
         document.getElementById('edit_location_bin').value = data.location_bin || '';
         document.getElementById('edit_status').value = data.status || 1;
         document.getElementById('edit_notes').value = data.notes || '';
-        
+
+        // Reset image UI
+        window.__editExistingCount = 0;
+        document.getElementById('edit_new_image_preview').innerHTML = '';
+        const editInp = document.getElementById('edit_item_images');
+        if (editInp) editInp.value = '';
+
+        // Load existing images
+        loadExistingImages(data.item_code);
+
         editModal.style.display = 'flex';
         setTimeout(() => {
-            document.getElementById('edit_item_name')?.focus();
+            if (canManageItems) document.getElementById('edit_item_name')?.focus();
             applyTransformationsToModalInputs();
         }, 100);
     }
@@ -1335,6 +1481,118 @@ $result = mysqli_query($conn, $query);
             }
         }
     });
+
+    // ============================================================
+    // IMAGE UPLOAD HANDLING
+    // ============================================================
+    const MAX_IMAGES = 3;
+
+    // Render preview for Add modal
+    function renderAddPreviews(files) {
+        const container = document.getElementById('add_image_preview');
+        container.innerHTML = '';
+        Array.from(files).slice(0, MAX_IMAGES).forEach((file) => {
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const div = document.createElement('div');
+                div.className = 'image-preview-item';
+                div.innerHTML = `<img src="${e.target.result}" alt="preview">`;
+                container.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        });
+        if (files.length > MAX_IMAGES) {
+            const warn = document.createElement('div');
+            warn.style.cssText = 'grid-column: 1/-1; color: #dc2626; font-size: 12px;';
+            warn.textContent = `Only the first ${MAX_IMAGES} images will be uploaded.`;
+            container.appendChild(warn);
+        }
+    }
+
+    const addImageInput = document.getElementById('add_item_images');
+    addImageInput?.addEventListener('change', function () {
+        renderAddPreviews(this.files);
+    });
+
+    // Render preview for Edit modal (new files)
+    const editImageInput = document.getElementById('edit_item_images');
+    editImageInput?.addEventListener('change', function () {
+        const container = document.getElementById('edit_new_image_preview');
+        container.innerHTML = '';
+        const remaining = MAX_IMAGES - (window.__editExistingCount || 0);
+        Array.from(this.files).slice(0, remaining).forEach(file => {
+            if (!file.type.startsWith('image/')) return;
+            const reader = new FileReader();
+            reader.onload = e => {
+                const div = document.createElement('div');
+                div.className = 'image-preview-item';
+                div.innerHTML = `<img src="${e.target.result}" alt="preview">`;
+                container.appendChild(div);
+            };
+            reader.readAsDataURL(file);
+        });
+        if (this.files.length > remaining) {
+            const warn = document.createElement('div');
+            warn.style.cssText = 'grid-column: 1/-1; color: #dc2626; font-size: 12px;';
+            warn.textContent = `Only ${remaining} more image(s) can be added (max ${MAX_IMAGES} total).`;
+            container.appendChild(warn);
+        }
+    });
+
+    // Fetch and render existing images in Edit modal
+    async function loadExistingImages(item_code) {
+        const container = document.getElementById('edit_existing_images');
+        if (!container) return;
+        container.innerHTML = '<div style="color:#94a3b8; font-size:12px;">Loading...</div>';
+        try {
+            const res = await fetch('get_item_images.php?item_code=' + encodeURIComponent(item_code));
+            const images = await res.json();
+            window.__editExistingCount = images.length;
+            container.innerHTML = '';
+            if (!images.length) {
+                container.innerHTML = '<div style="color:#94a3b8; font-size:12px;">No images attached.</div>';
+                return;
+            }
+            images.forEach(img => {
+                const div = document.createElement('div');
+                div.className = 'image-preview-item';
+                div.dataset.imageId = img.id;
+
+                // Tooltip shows upload datetime and uploader (Asia/Manila)
+                const uploadedLabel = img.created_at
+                    ? `Uploaded: ${img.created_at}${img.created_by ? ' by ' + img.created_by : ''}`
+                    : '';
+
+                div.innerHTML = `
+                    <img src="../uploads/items_images/${img.item_image}" alt="item image" title="${uploadedLabel}">
+                    ${canManageItems ? '<button type="button" class="remove-image-btn" title="Mark for deletion">&times;</button>' : ''}
+                `;
+
+                if (canManageItems) {
+                    div.querySelector('.remove-image-btn').addEventListener('click', () => {
+                        const isMarked = div.classList.toggle('marked-for-delete');
+                        let hidden = div.querySelector('input[name="delete_images[]"]');
+                        if (isMarked) {
+                            if (!hidden) {
+                                hidden = document.createElement('input');
+                                hidden.type = 'hidden';
+                                hidden.name = 'delete_images[]';
+                                hidden.value = img.id;
+                                div.appendChild(hidden);
+                            }
+                        } else if (hidden) {
+                            hidden.remove();
+                        }
+                    });
+                }
+                container.appendChild(div);
+            });
+        } catch (err) {
+            console.error(err);
+            container.innerHTML = '<div style="color:#dc2626; font-size:12px;">Failed to load images.</div>';
+        }
+    }
 </script>
 </body>
 </html>

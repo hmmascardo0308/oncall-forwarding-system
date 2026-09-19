@@ -57,8 +57,8 @@ if ($so_list_result && $so_list_result->num_rows > 0) {
     }
 }
 
-// Fetch all drivers from employee_list where position = 'DRIVER'
-$drivers_query = "SELECT employee_code, full_name FROM employee_list WHERE position = 'DRIVER' AND status = 'active' ORDER BY full_name";
+// Fetch all drivers from employee_list where position = 'DRIVER' (including profile_picture)
+$drivers_query = "SELECT employee_code, full_name, profile_picture FROM employee_list WHERE position = 'DRIVER' AND status = 'active' ORDER BY full_name";
 $drivers_result = $conn->query($drivers_query);
 $drivers = [];
 if ($drivers_result && $drivers_result->num_rows > 0) {
@@ -78,6 +78,165 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
     <link rel="stylesheet" href="css/sales_order.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
+    <style>
+        /* Driver Profile Picture Preview */
+        .driver-image-preview {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.55);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            backdrop-filter: blur(2px);
+        }
+        .driver-image-preview.active {
+            display: flex;
+        }
+        .driver-image-preview-card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 20px;
+            max-width: 340px;
+            width: 100%;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+            position: relative;
+            text-align: center;
+            animation: driverPreviewPop 0.22s ease-out;
+        }
+        @keyframes driverPreviewPop {
+            from { transform: scale(0.9); opacity: 0; }
+            to   { transform: scale(1);   opacity: 1; }
+        }
+        .driver-image-preview-close {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: none;
+            background: #f1f5f9;
+            color: #475569;
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 1;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s ease;
+        }
+        .driver-image-preview-close:hover {
+            background: #dc2626;
+            color: #ffffff;
+            transform: rotate(90deg);
+        }
+        .driver-image-preview-card img {
+            width: 220px;
+            height: 220px;
+            object-fit: cover;
+            border-radius: 12px;
+            border: 3px solid #e2e8f0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            display: block;
+            margin: 8px auto 14px;
+        }
+        .driver-image-preview-name {
+            font-size: 16px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 4px;
+        }
+        .driver-image-preview-code {
+            font-size: 12px;
+            color: #64748b;
+            letter-spacing: 0.5px;
+        }
+        .driver-image-preview-placeholder {
+            width: 220px;
+            height: 220px;
+            margin: 8px auto 14px;
+            border-radius: 12px;
+            border: 3px dashed #cbd5e1;
+            background: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            gap: 8px;
+        }
+        .driver-image-preview-placeholder i {
+            width: 56px;
+            height: 56px;
+        }
+        .driver-image-preview-placeholder span {
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .driver-image-preview-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #94a3b8;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        /* Driver field with View button */
+        .driver-field-wrap {
+            display: flex;
+            gap: 8px;
+            align-items: stretch;
+        }
+        .driver-field-wrap select {
+            flex: 1;
+            min-width: 0;
+        }
+        .view-driver-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            padding: 0 12px;
+            height: 40px;
+            border-radius: 8px;
+            border: 1.5px solid var(--accent-blue, #2563eb);
+            background: #eff6ff;
+            color: var(--accent-blue, #2563eb);
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s ease;
+            font-family: inherit;
+        }
+        .view-driver-btn:hover:not(:disabled) {
+            background: var(--accent-blue, #2563eb);
+            color: #ffffff;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
+        }
+        .view-driver-btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        .view-driver-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            background: #f1f5f9;
+            border-color: #cbd5e1;
+            color: #94a3b8;
+        }
+        .view-driver-btn i {
+            width: 14px;
+            height: 14px;
+        }
+    </style>
 </head>
 <body>
 
@@ -88,6 +247,17 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
         <h3>Access Denied</h3>
         <p>You don't have permission to access this page.</p>
         <button class="modal-btn" onclick="closeModal()">OK</button>
+    </div>
+</div>
+
+<!-- Driver Profile Picture Preview Modal -->
+<div class="driver-image-preview" id="driverImagePreview">
+    <div class="driver-image-preview-card">
+        <button type="button" class="driver-image-preview-close" id="closeDriverImagePreview" title="Close">×</button>
+        <div class="driver-image-preview-label">Driver Profile</div>
+        <div id="driverImagePreviewContent"></div>
+        <div class="driver-image-preview-name" id="driverImagePreviewName"></div>
+        <div class="driver-image-preview-code" id="driverImagePreviewCode"></div>
     </div>
 </div>
 
@@ -196,18 +366,24 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
                     <input type="text" id="paymentTerms" readonly placeholder="Select pricing first">
                 </div>
 
-                <!-- Driver Selection -->
+                <!-- Driver Selection with View Driver button -->
                 <div class="form-group">
                     <label>Driver <span class="required">*</span></label>
-                    <select id="driverSelect" required disabled>
-                        <option value="">-- Select Driver --</option>
-                        <?php foreach ($drivers as $driver): ?>
-                            <option value="<?= htmlspecialchars($driver['employee_code']) ?>" 
-                                    data-full-name="<?= htmlspecialchars($driver['full_name']) ?>">
-                                <?= htmlspecialchars($driver['employee_code']) . ' - ' . htmlspecialchars($driver['full_name']) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <div class="driver-field-wrap">
+                        <select id="driverSelect" required disabled>
+                            <option value="">-- Select Driver --</option>
+                            <?php foreach ($drivers as $driver): ?>
+                                <option value="<?= htmlspecialchars($driver['employee_code']) ?>" 
+                                        data-full-name="<?= htmlspecialchars($driver['full_name']) ?>"
+                                        data-profile-picture="<?= htmlspecialchars($driver['profile_picture'] ?? '') ?>">
+                                    <?= htmlspecialchars($driver['employee_code']) . ' - ' . htmlspecialchars($driver['full_name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button type="button" class="view-driver-btn" id="viewDriverBtn" disabled title="View driver's profile picture">
+                            <i data-lucide="image"></i> View Driver
+                        </button>
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -344,10 +520,81 @@ modal.addEventListener('click', function(e) {
     }
 });
 
+// ============================================================
+// DRIVER PROFILE PICTURE PREVIEW
+// ============================================================
+const driverImagePreview = document.getElementById('driverImagePreview');
+const driverImagePreviewContent = document.getElementById('driverImagePreviewContent');
+const driverImagePreviewName = document.getElementById('driverImagePreviewName');
+const driverImagePreviewCode = document.getElementById('driverImagePreviewCode');
+const closeDriverImagePreviewBtn = document.getElementById('closeDriverImagePreview');
+const viewDriverBtn = document.getElementById('viewDriverBtn');
+
+function openDriverImagePreview(driverCode, driverName, profilePicture) {
+    driverImagePreviewName.textContent = driverName || 'Unknown Driver';
+    driverImagePreviewCode.textContent = driverCode || '';
+
+    if (profilePicture) {
+        driverImagePreviewContent.innerHTML = `
+            <img src="../uploads/employee_images/${profilePicture}" alt="${driverName}">
+        `;
+    } else {
+        driverImagePreviewContent.innerHTML = `
+            <div class="driver-image-preview-placeholder">
+                <i data-lucide="user"></i>
+                <span>No profile picture uploaded</span>
+            </div>
+        `;
+    }
+
+    driverImagePreview.classList.add('active');
+    lucide.createIcons();
+}
+
+function closeDriverImagePreview() {
+    driverImagePreview.classList.remove('active');
+    // Clear content to avoid stale image flash on next open
+    setTimeout(() => {
+        if (!driverImagePreview.classList.contains('active')) {
+            driverImagePreviewContent.innerHTML = '';
+        }
+    }, 200);
+}
+
+// Opens preview using the currently selected driver in the dropdown
+function viewSelectedDriver() {
+    const driverSelect = document.getElementById('driverSelect');
+    const selectedOption = driverSelect.selectedOptions[0];
+    const driverCode = driverSelect.value || '';
+
+    if (!driverCode || !selectedOption) {
+        return;
+    }
+
+    const driverName = selectedOption.dataset.fullName || '';
+    const profilePicture = selectedOption.dataset.profilePicture || '';
+
+    openDriverImagePreview(driverCode, driverName, profilePicture);
+}
+
+closeDriverImagePreviewBtn?.addEventListener('click', closeDriverImagePreview);
+
+viewDriverBtn?.addEventListener('click', viewSelectedDriver);
+
+driverImagePreview?.addEventListener('click', function(e) {
+    if (e.target === driverImagePreview) {
+        closeDriverImagePreview();
+    }
+});
+
 // Close modal with Escape key
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && modal.style.display === 'flex') {
-        closeModal();
+    if (e.key === 'Escape') {
+        if (driverImagePreview.classList.contains('active')) {
+            closeDriverImagePreview();
+        } else if (modal.style.display === 'flex') {
+            closeModal();
+        }
     }
 });
 
@@ -861,6 +1108,12 @@ document.getElementById('customerSelect').addEventListener('change', function() 
     document.getElementById('destinationFrom').value = '';
     document.getElementById('destinationTo').value = '';
     document.getElementById('paymentTerms').value = 'Select pricing first';
+
+    // Reset driver + view driver button
+    document.getElementById('driverSelect').value = '';
+    document.getElementById('driverName').value = '';
+    viewDriverBtn.disabled = true;
+    closeDriverImagePreview();
     
     // Disable price editing when no customer
     disablePriceEditing();
@@ -884,11 +1137,25 @@ document.getElementById('customerSelect').addEventListener('change', function() 
     }
 });
 
-// Driver selection event listener
+// Driver selection event listener — shows profile picture preview + enables View Driver button
 document.getElementById('driverSelect').addEventListener('change', function() {
     const selectedOption = this.selectedOptions[0];
     const driverName = selectedOption ? selectedOption.dataset.fullName : '';
+    const driverCode = this.value || '';
+    const profilePicture = selectedOption ? selectedOption.dataset.profilePicture : '';
+
     document.getElementById('driverName').value = driverName || '';
+
+    if (driverCode) {
+        // Enable the View Driver button
+        viewDriverBtn.disabled = false;
+        // Show profile picture preview
+        openDriverImagePreview(driverCode, driverName, profilePicture);
+    } else {
+        // Disable the View Driver button
+        viewDriverBtn.disabled = true;
+        closeDriverImagePreview();
+    }
 });
 
 // Truck selection event listeners
