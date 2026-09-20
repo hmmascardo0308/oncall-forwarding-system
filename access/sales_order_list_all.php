@@ -99,6 +99,73 @@ if ($result) {
     }
 }
 
+// ============================================================
+// FETCH SPECIAL CHARGES FOR ALL DISPLAYED SOs (bulk query)
+// ============================================================
+$special_charges_map = []; // keyed by sales_order_no => array of charges
+
+if (!empty($sales_orders)) {
+    $so_numbers = array_column($sales_orders, 'sales_order_no');
+    if (!empty($so_numbers)) {
+        $placeholders = implode(',', array_fill(0, count($so_numbers), '?'));
+        $charge_query = "SELECT sales_order_no, charge_kind, charge_amount 
+                         FROM sales_order_special_charge 
+                         WHERE sales_order_no IN ($placeholders)";
+        $stmt = $conn->prepare($charge_query);
+        if ($stmt) {
+            $stmt->bind_param(str_repeat('s', count($so_numbers)), ...$so_numbers);
+            $stmt->execute();
+            $charge_result = $stmt->get_result();
+            while ($row = $charge_result->fetch_assoc()) {
+                $so_no = $row['sales_order_no'];
+                if (!isset($special_charges_map[$so_no])) {
+                    $special_charges_map[$so_no] = [];
+                }
+                $special_charges_map[$so_no][] = [
+                    'kind'   => $row['charge_kind'],
+                    'amount' => floatval($row['charge_amount'])
+                ];
+            }
+        }
+    }
+}
+
+// ============================================================
+// HELPER: Compute the full amount breakdown for a single SO
+// ============================================================
+function computeSOAmounts($so, $special_charges_map) {
+    $so_no = $so['sales_order_no'] ?? '';
+
+    $net_amount      = floatval($so['amount'] ?? 0);          // already-discounted net
+    $discount_amount = floatval($so['discount_amount'] ?? 0);
+    $vat_percent     = floatval($so['vat_percent'] ?? 0);
+
+    // Reconstruct the gross subtotal (before discount)
+    $gross_subtotal = $net_amount + $discount_amount;
+
+    // VAT is computed on the net amount (matches how save_so.php stored it)
+    $vat_amount = $net_amount * ($vat_percent / 100);
+
+    // Special charges
+    $special_total = 0;
+    if (!empty($special_charges_map[$so_no])) {
+        foreach ($special_charges_map[$so_no] as $sc) {
+            $special_total += floatval($sc['amount'] ?? 0);
+        }
+    }
+
+    return [
+        'gross_subtotal'  => $gross_subtotal,
+        'net_amount'      => $net_amount,
+        'discount_amount' => $discount_amount,
+        'vat_percent'     => $vat_percent,
+        'vat_amount'      => $vat_amount,
+        'special_total'   => $special_total,
+        'grand_total'     => $net_amount + $vat_amount + $special_total,
+        'special_items'   => $special_charges_map[$so_no] ?? []
+    ];
+}
+
 // Get unique statuses for filter dropdown
 $status_query = "SELECT DISTINCT status FROM sales_order WHERE status IS NOT NULL AND status != '' ORDER BY status";
 $status_result = $conn->query($status_query);
@@ -145,12 +212,8 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <!-- <link rel="stylesheet" href="css/home.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/so_list_all.css?v=<?= time(); ?>">
-
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
-    
-  
 </head>
 <body>
 
@@ -258,6 +321,12 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             <!-- Table -->
             <div class="table-container">
                 <?php if (count($sales_orders) > 0): ?>
+                    <?php
+                    // Pre-compute totals for the footer
+                    $grand_total_sum = 0;
+                    $grand_vat_sum = 0;
+                    $grand_charges_sum = 0;
+                    ?>
                     <table>
                         <thead>
                             <tr>
@@ -323,8 +392,15 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($sales_orders as $so): ?>
-                                <tr ondblclick="showDetail(<?php echo htmlspecialchars(json_encode($so)); ?>)">
+                            <?php foreach ($sales_orders as $so): 
+                                $calc = computeSOAmounts($so, $special_charges_map);
+                                $grand_total_sum   += $calc['grand_total'];
+                                $grand_vat_sum     += $calc['vat_amount'];
+                                $grand_charges_sum += $calc['special_total'];
+                            ?>
+                                <tr ondblclick='showDetail(<?php echo htmlspecialchars(json_encode(array_merge($so, [
+                                    "computed" => $calc
+                                ])), ENT_QUOTES, "UTF-8"); ?>)'>
                                     <td>
                                         <strong><?php echo htmlspecialchars($so['sales_order_no']); ?></strong>
                                     </td>
@@ -338,7 +414,34 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                     <td><?php echo date('M d, Y', strtotime($so['order_date'])); ?></td>
                                     <td><?php echo $so['delivery_date'] ? date('M d, Y', strtotime($so['delivery_date'])) : '-'; ?></td>
                                     <td><?php echo htmlspecialchars($so['quantity'] ?: '0'); ?></td>
-                                    <td class="amount"><?php echo formatCurrency($so['amount']); ?></td>
+                                    <td class="amount">
+                                        <div style="font-weight:600;">
+                                            ₱<?php echo formatCurrency($calc['grand_total']); ?>
+                                        </div>
+                                        <?php if ($calc['discount_amount'] > 0): ?>
+                                        <div style="font-size:11px;color:#64748b;font-weight:400;">
+                                            Subtotal: ₱<?php echo formatCurrency($calc['gross_subtotal']); ?>
+                                        </div>
+                                        <div style="font-size:11px;color:#64748b;font-weight:400;">
+                                            Disc: ₱<?php echo formatCurrency($calc['discount_amount']); ?>
+                                        </div>
+                                        <?php endif; ?>
+                                        <?php if ($calc['vat_percent'] > 0): ?>
+                                        <div style="font-size:10px;color:#94a3b8;">
+                                            VAT (<?php echo htmlspecialchars($so['vat_percent']); ?>%): ₱<?php echo formatCurrency($calc['vat_amount']); ?>
+                                        </div>
+                                        <?php endif; ?>
+                                        <?php if ($calc['special_total'] > 0): ?>
+                                        <div style="font-size:10px;color:#b45309;font-weight:600;margin-top:3px;border-top:1px dashed #fcd34d;padding-top:3px;">
+                                            Special Charges: ₱<?php echo formatCurrency($calc['special_total']); ?>
+                                        </div>
+                                        <?php foreach ($calc['special_items'] as $item): ?>
+                                        <div style="font-size:10px;color:#b45309;font-weight:400;padding-left:8px;">
+                                            • <?php echo htmlspecialchars($item['kind']); ?>: ₱<?php echo formatCurrency($item['amount']); ?>
+                                        </div>
+                                        <?php endforeach; ?>
+                                        <?php endif; ?>
+                                    </td>
                                     <td>
                                         <span class="badge-status <?php echo getStatusBadgeClass($so['status']); ?>">
                                             <?php echo htmlspecialchars($so['status'] ?: 'N/A'); ?>
@@ -351,7 +454,15 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                     </table>
                     <div class="table-footer">
                         <span>Showing <?php echo count($sales_orders); ?> record(s)</span>
-                        <span>Total Amount: <strong><?php echo formatCurrency(array_sum(array_column($sales_orders, 'amount'))); ?></strong></span>
+                        <span style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">
+                            <?php if ($grand_vat_sum > 0): ?>
+                            <span>Total VAT: <strong>₱<?php echo formatCurrency($grand_vat_sum); ?></strong></span>
+                            <?php endif; ?>
+                            <?php if ($grand_charges_sum > 0): ?>
+                            <span style="color:#b45309;">Total Special Charges: <strong>₱<?php echo formatCurrency($grand_charges_sum); ?></strong></span>
+                            <?php endif; ?>
+                            <span>Grand Total: <strong>₱<?php echo formatCurrency($grand_total_sum); ?></strong></span>
+                        </span>
                     </div>
                 <?php else: ?>
                     <div class="no-results">
@@ -406,7 +517,9 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
         });
 
+        // ============================================================
         // Detail Modal Functions
+        // ============================================================
         function showDetail(so) {
             const modal = document.getElementById('detailModal');
             const orderNo = document.getElementById('detailOrderNo');
@@ -419,6 +532,18 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             // Set status badge
             status.className = 'badge-status ' + getStatusBadgeClass(so.status);
             status.textContent = so.status || 'N/A';
+
+            // Computed amounts (from PHP, or recompute)
+            const calc = so.computed || {
+                gross_subtotal:  parseFloat(so.amount || 0) + parseFloat(so.discount_amount || 0),
+                net_amount:      parseFloat(so.amount || 0),
+                discount_amount: parseFloat(so.discount_amount || 0),
+                vat_percent:     parseFloat(so.vat_percent || 0),
+                vat_amount:      parseFloat(so.amount || 0) * (parseFloat(so.vat_percent || 0) / 100),
+                special_total:   0,
+                grand_total:     parseFloat(so.amount || 0) + (parseFloat(so.amount || 0) * (parseFloat(so.vat_percent || 0) / 100)),
+                special_items:   []
+            };
 
             // Build detail grid
             const fields = [
@@ -443,29 +568,50 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 { label: 'Destination To', value: so.destination_to || 'N/A', full: true, section: 'destination' },
                 { label: 'Delivery Address', value: so.delivery_address || 'N/A', full: true, section: 'destination' },
                 
-                // Financial
+                // Financial — now includes VAT & special charges
                 { label: 'Quantity', value: so.quantity || '0', full: false, section: 'financial' },
-                { label: 'Unit Price', value: formatCurrency(so.unit_price), full: false, section: 'financial' },
+                { label: 'Unit Price', value: '₱' + formatCurrency(so.unit_price), full: false, section: 'financial' },
+                { label: 'Subtotal (before discount)', value: '₱' + formatCurrency(calc.gross_subtotal), full: false, section: 'financial' },
                 { label: 'Discount %', value: so.discount_percent ? so.discount_percent + '%' : '0%', full: false, section: 'financial' },
-                { label: 'Amount', value: formatCurrency(so.amount), full: false, section: 'financial' },
-                { label: 'Discount Amount', value: formatCurrency(so.discount_amount), full: false, section: 'financial' },
-                
+                { label: 'Discount Amount', value: '₱' + formatCurrency(calc.discount_amount), full: false, section: 'financial' },
+                { label: 'Net Amount', value: '₱' + formatCurrency(calc.net_amount), full: false, section: 'financial' },
+                { label: 'VAT (' + (calc.vat_percent || 0) + '%)', value: '₱' + formatCurrency(calc.vat_amount), full: false, section: 'financial' },
+                { label: 'Special Charges', value: calc.special_total > 0 ? '₱' + formatCurrency(calc.special_total) : '₱0.00', full: false, section: 'financial', amount: true, highlight: calc.special_total > 0 },
+                { label: 'TOTAL AMOUNT DUE', value: '₱' + formatCurrency(calc.grand_total), full: false, section: 'financial', amount: true, bold: true },
+            ];
+
+            // Special charge breakdown (if any)
+            if (calc.special_items && calc.special_items.length > 0) {
+                fields.push({ label: '— Special Charges Breakdown —', value: '', full: true, section: 'financial', divider: true });
+                calc.special_items.forEach(item => {
+                    fields.push({
+                        label: '• ' + item.kind,
+                        value: '₱' + formatCurrency(item.amount),
+                        full: false,
+                        section: 'financial',
+                        amount: true,
+                        subItem: true
+                    });
+                });
+            }
+
+            fields.push(
                 // Additional
                 { label: 'Notes', value: so.notes || 'N/A', full: true, section: 'notes' },
                 { label: 'Created By', value: so.created_by || 'N/A', full: false, section: 'audit' },
                 { label: 'Created Date', value: formatDateTime(so.created_date), full: false, section: 'audit' },
                 { label: 'Updated By', value: so.updated_by || 'N/A', full: false, section: 'audit' },
-                { label: 'Updated At', value: so.updated_at ? formatDateTime(so.updated_at) : 'N/A', full: false, section: 'audit' },
-            ];
+                { label: 'Updated At', value: so.updated_at ? formatDateTime(so.updated_at) : 'N/A', full: false, section: 'audit' }
+            );
 
             // Section definitions
             const sections = {
-                basic: { title: 'Basic Information', order: 1 },
-                vehicle: { title: 'Vehicle Details', order: 2 },
-                destination: { title: 'Route & Delivery', order: 3 },
-                financial: { title: 'Financial Details', order: 4 },
-                notes: { title: 'Additional Notes', order: 5 },
-                audit: { title: 'Audit Information', order: 6 }
+                basic:       { title: 'Basic Information',     order: 1 },
+                vehicle:     { title: 'Vehicle Details',       order: 2 },
+                destination: { title: 'Route & Delivery',      order: 3 },
+                financial:   { title: 'Financial Details',     order: 4 },
+                notes:       { title: 'Additional Notes',      order: 5 },
+                audit:       { title: 'Audit Information',     order: 6 }
             };
 
             // Group fields by section
@@ -479,17 +625,25 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             let html = '';
             Object.keys(sections).forEach(sectionKey => {
                 if (grouped[sectionKey] && grouped[sectionKey].length > 0) {
-                    // Check if any field in this section has a non-empty value
+                    // Skip if all values are N/A
                     const hasValue = grouped[sectionKey].some(f => f.value !== 'N/A' && f.value !== '');
                     if (hasValue) {
                         html += `<div class="detail-section-title">${sections[sectionKey].title}</div>`;
                         grouped[sectionKey].forEach(f => {
-                            const fullClass = f.full ? 'full-width' : '';
-                            const amountClass = (f.label.includes('Amount') || f.label.includes('Price') || f.label.includes('Total')) ? ' amount' : '';
+                            // Handle divider
+                            if (f.divider) {
+                                html += `<div class="detail-divider" style="grid-column:1/-1;margin:10px 0 6px;border-top:1px dashed #e2e8f0;padding-top:6px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">${f.label}</div>`;
+                                return;
+                            }
+                            const fullClass  = f.full ? 'full-width' : '';
+                            const amountClass = f.amount ? ' amount' : '';
+                            const boldStyle = f.bold ? ' style="font-weight:700;color:#16a34a;font-size:15px;"' : '';
+                            const highlightStyle = f.highlight ? ' style="color:#b45309;font-weight:600;"' : '';
+                            const subItemStyle = f.subItem ? ' style="padding-left:20px;font-size:12px;color:#b45309;"' : '';
                             html += `
-                                <div class="detail-item ${fullClass}">
+                                <div class="detail-item ${fullClass}"${subItemStyle}>
                                     <span class="label">${f.label}</span>
-                                    <span class="value${amountClass}">${f.value}</span>
+                                    <span class="value${amountClass}"${boldStyle}${highlightStyle}>${f.value}</span>
                                 </div>
                             `;
                         });
@@ -547,7 +701,7 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
 
         function formatCurrency(amount) {
             if (amount === null || amount === undefined || isNaN(amount)) return '0.00';
-            return Number(amount).toFixed(2);
+            return Number(amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
     </script>
 </body>

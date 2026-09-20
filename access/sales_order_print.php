@@ -27,12 +27,34 @@ if (!$result || $result->num_rows === 0) {
 
 $so = $result->fetch_assoc();
 
+// ── Fetch special charges for this SO ────────────────────────────────────────
+$special_charges       = [];
+$special_charges_total = 0.0;
+
+$charge_res = $conn->query("
+    SELECT charge_kind, charge_amount
+    FROM `oncall_forwarding`.`sales_order_special_charge`
+    WHERE sales_order_no = '{$safe_so_no}'
+    ORDER BY id ASC
+");
+
+if ($charge_res) {
+    while ($row = $charge_res->fetch_assoc()) {
+        $amount = floatval($row['charge_amount']);
+        $special_charges[] = [
+            'kind'   => $row['charge_kind'],
+            'amount' => $amount,
+        ];
+        $special_charges_total += $amount;
+    }
+}
+
 // Calculate totals
 $subtotal = $so['amount'];
 $discount_amount = $so['discount_amount'];
 $net_of_discount = $subtotal; // The 'amount' field is already net of discount
 $vat_amount = $net_of_discount * ($so['vat_percent'] / 100);
-$total_due = $net_of_discount + $vat_amount;
+$total_due = $net_of_discount + $vat_amount + $special_charges_total;
 
 // Get driver name
 $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
@@ -45,7 +67,52 @@ $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
     <title>Sales Order - <?= htmlspecialchars($so['sales_order_no']) ?></title>
     <link rel="stylesheet" href="css/so_print.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-  
+    <style>
+        /* ── Special charges (print-friendly) ─────────────────────────── */
+        .special-charges-block {
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+        .special-charges-block h4 {
+            font-size: 11px;
+            font-weight: 700;
+            color: #92400e;
+            margin: 0 0 4px 0;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .special-charges-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+        .special-charges-table th,
+        .special-charges-table td {
+            border: 1px solid #d1d5db;
+            padding: 3px 6px;
+            text-align: left;
+        }
+        .special-charges-table th {
+            background: #fef3c7;
+            color: #92400e;
+            font-weight: 700;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .special-charges-table td.amount {
+            text-align: right;
+            font-weight: 600;
+            white-space: nowrap;
+            color: #92400e;
+        }
+        .special-charges-table tr.special-total td {
+            background: #fffbeb;
+            font-weight: 800;
+            color: #92400e;
+            border-top: 2px solid #fcd34d;
+        }
+    </style>
 </head>
 <body>
 
@@ -120,6 +187,35 @@ $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
             </tbody>
         </table>
 
+        <!-- Special Charges -->
+        <?php if (!empty($special_charges)): ?>
+        <div class="special-charges-block">
+            <h4>Special Charges</h4>
+            <table class="special-charges-table">
+                <thead>
+                    <tr>
+                        <th style="width:8%;">#</th>
+                        <th>Description</th>
+                        <th style="width:25%; text-align:right;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($special_charges as $idx => $charge): ?>
+                    <tr>
+                        <td><?= $idx + 1 ?></td>
+                        <td><?= htmlspecialchars($charge['kind']) ?></td>
+                        <td class="amount">₱ <?= number_format($charge['amount'], 2) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <tr class="special-total">
+                        <td colspan="2" style="text-align:right;">Total Special Charges</td>
+                        <td class="amount">₱ <?= number_format($special_charges_total, 2) ?></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+
         <!-- Totals -->
         <div class="totals-section">
             <table class="totals-table">
@@ -140,6 +236,12 @@ $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
                         <td class="label">VAT (<?= number_format($so['vat_percent'], 0) ?>%)</td>
                         <td class="value"><?= number_format($vat_amount, 2) ?></td>
                     </tr>
+                    <?php if ($special_charges_total > 0): ?>
+                    <tr>
+                        <td class="label" style="color:#92400e;">Special Charges</td>
+                        <td class="value" style="color:#92400e;font-weight:700;"><?= number_format($special_charges_total, 2) ?></td>
+                    </tr>
+                    <?php endif; ?>
                     <tr class="grand-total">
                         <td class="label">Total Due</td>
                         <td class="value">₱ <?= number_format($total_due, 2) ?></td>
@@ -229,6 +331,35 @@ $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
             </tbody>
         </table>
 
+        <!-- Special Charges -->
+        <?php if (!empty($special_charges)): ?>
+        <div class="special-charges-block">
+            <h4>Special Charges</h4>
+            <table class="special-charges-table">
+                <thead>
+                    <tr>
+                        <th style="width:8%;">#</th>
+                        <th>Description</th>
+                        <th style="width:25%; text-align:right;">Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($special_charges as $idx => $charge): ?>
+                    <tr>
+                        <td><?= $idx + 1 ?></td>
+                        <td><?= htmlspecialchars($charge['kind']) ?></td>
+                        <td class="amount">₱ <?= number_format($charge['amount'], 2) ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <tr class="special-total">
+                        <td colspan="2" style="text-align:right;">Total Special Charges</td>
+                        <td class="amount">₱ <?= number_format($special_charges_total, 2) ?></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+
         <!-- Totals -->
         <div class="totals-section">
             <table class="totals-table">
@@ -249,6 +380,12 @@ $driver_name = $so['driver_name'] ?? $so['driver'] ?? 'Not Assigned';
                         <td class="label">VAT (<?= number_format($so['vat_percent'], 0) ?>%)</td>
                         <td class="value"><?= number_format($vat_amount, 2) ?></td>
                     </tr>
+                    <?php if ($special_charges_total > 0): ?>
+                    <tr>
+                        <td class="label" style="color:#92400e;">Special Charges</td>
+                        <td class="value" style="color:#92400e;font-weight:700;"><?= number_format($special_charges_total, 2) ?></td>
+                    </tr>
+                    <?php endif; ?>
                     <tr class="grand-total">
                         <td class="label">Total Due</td>
                         <td class="value">₱ <?= number_format($total_due, 2) ?></td>

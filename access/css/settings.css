@@ -254,6 +254,27 @@ header {
     background: linear-gradient(135deg, #3b82f6, #06b6d4);
 }
 
+
+
+.icon.special-charge {
+    background: #a44fff;
+    color: #ffffff;
+}
+.special-charge-value {
+    color: #9333ea;
+    font-weight: 600;
+}
+.special-charge-btn {
+    background: #9333ea;
+    color: white;
+}
+.special-charge-btn:hover {
+    background: #7e22ce;
+}
+
+
+
+
 .settings-card-header h2 {
     margin: 0;
     font-size: 18px;
@@ -611,4 +632,59 @@ header {
         width: 100%;
         justify-content: flex-end;
     }
+}
+
+
+
+
+
+.icon.work-department {
+    background: #3431e0;
+    color: #ffffff;
+}
+.work-department-value {
+    color: #0a0f8f;
+    font-weight: 600;
+}
+.work-department-btn {
+    background: #2e2ebc;
+    color: white;
+}
+.work-department-btn:hover {
+    background: #9156f8;
+}
+
+
+
+.icon.work-location {
+    background: #333275;
+    color: #ffffff;
+}
+.work-location-value {
+    color: #4d0d75;
+    font-weight: 600;
+}
+.work-location-btn {
+    background: #040488;
+    color: white;
+}
+.work-location-btn:hover {
+    background: #7d107b;
+}
+
+
+.icon.work-position {
+    background: #3a13a6;
+    color: #ffffff;
+}
+.work-position-value {
+    color: #154bb9;
+    font-weight: 600;
+}
+.work-position-btn {
+    background: #31a6dd;
+    color: white;
+}
+.work-position-btn:hover {
+    background: #896ce0;
 }

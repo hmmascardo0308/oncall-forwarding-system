@@ -109,6 +109,93 @@ if ($result) {
     }
 }
 
+// ============================================================
+// FETCH SPECIAL CHARGES FOR ALL DISPLAYED SOs (bulk query)
+// ============================================================
+$special_charges_map = []; // keyed by sales_order_no => array of charges
+
+if (!empty($sales_orders)) {
+    $so_numbers = array_column($sales_orders, 'sales_order_no');
+    if (!empty($so_numbers)) {
+        $placeholders = implode(',', array_fill(0, count($so_numbers), '?'));
+        $charge_query = "SELECT sales_order_no, charge_kind, charge_amount 
+                         FROM sales_order_special_charge 
+                         WHERE sales_order_no IN ($placeholders)";
+        $stmt = $conn->prepare($charge_query);
+        if ($stmt) {
+            $stmt->bind_param(str_repeat('s', count($so_numbers)), ...$so_numbers);
+            $stmt->execute();
+            $charge_result = $stmt->get_result();
+            while ($row = $charge_result->fetch_assoc()) {
+                $so_no = $row['sales_order_no'];
+                if (!isset($special_charges_map[$so_no])) {
+                    $special_charges_map[$so_no] = [];
+                }
+                $special_charges_map[$so_no][] = [
+                    'kind'   => $row['charge_kind'],
+                    'amount' => floatval($row['charge_amount'])
+                ];
+            }
+        }
+    }
+}
+
+// ============================================================
+// HELPER: Compute the full amount breakdown for a single SO
+// ============================================================
+function computeSOAmounts($so, $special_charges_map) {
+    $so_no = $so['sales_order_no'] ?? '';
+
+    $net_amount      = floatval($so['amount'] ?? 0);          // already-discounted net
+    $discount_amount = floatval($so['discount_amount'] ?? 0);
+    $vat_percent     = floatval($so['vat_percent'] ?? 0);
+
+    // Reconstruct the gross subtotal (before discount)
+    $gross_subtotal = $net_amount + $discount_amount;
+
+    // VAT is computed on the net amount (matches how save_so.php stored it)
+    $vat_amount = $net_amount * ($vat_percent / 100);
+
+    // Special charges
+    $special_total = 0;
+    if (!empty($special_charges_map[$so_no])) {
+        foreach ($special_charges_map[$so_no] as $sc) {
+            $special_total += floatval($sc['amount'] ?? 0);
+        }
+    }
+
+    return [
+        'gross_subtotal'  => $gross_subtotal,
+        'net_amount'      => $net_amount,
+        'discount_amount' => $discount_amount,
+        'vat_percent'     => $vat_percent,
+        'vat_amount'      => $vat_amount,
+        'special_total'   => $special_total,
+        'grand_total'     => $net_amount + $vat_amount + $special_total,
+        'special_items'   => $special_charges_map[$so_no] ?? []
+    ];
+}
+
+// ============================================================
+// Compute totals
+// ============================================================
+$grand_total_sum   = 0;
+$grand_vat_sum     = 0;
+$grand_charges_sum = 0;
+$grand_net_sum     = 0;
+$grand_discount_sum = 0;
+$grand_subtotal_sum = 0;
+
+foreach ($sales_orders as $so) {
+    $calc = computeSOAmounts($so, $special_charges_map);
+    $grand_total_sum    += $calc['grand_total'];
+    $grand_vat_sum      += $calc['vat_amount'];
+    $grand_charges_sum  += $calc['special_total'];
+    $grand_net_sum      += $calc['net_amount'];
+    $grand_discount_sum += $calc['discount_amount'];
+    $grand_subtotal_sum += $calc['gross_subtotal'];
+}
+
 // Build export data
 $export_data = [];
 
@@ -130,9 +217,13 @@ if ($date_to) {
 }
 $export_data[] = ['Total Sales Orders: ' . count($sales_orders)];
 
-// Calculate total amount
-$total_amount = array_sum(array_column($sales_orders, 'amount'));
-$export_data[] = ['Total Amount: ₱ ' . number_format($total_amount, 2)];
+// Enhanced summary totals
+$export_data[] = ['Gross Subtotal: ₱ ' . number_format($grand_subtotal_sum, 2)];
+$export_data[] = ['Total Discount: ₱ ' . number_format($grand_discount_sum, 2)];
+$export_data[] = ['Net Amount: ₱ ' . number_format($grand_net_sum, 2)];
+$export_data[] = ['Total VAT: ₱ ' . number_format($grand_vat_sum, 2)];
+$export_data[] = ['Total Special Charges: ₱ ' . number_format($grand_charges_sum, 2)];
+$export_data[] = ['GRAND TOTAL: ₱ ' . number_format($grand_total_sum, 2)];
 $export_data[] = []; // Empty row for spacing
 
 // Column headers - Full detailed list
@@ -157,9 +248,13 @@ $export_data[] = [
     'Quantity',
     'Unit Price',
     'Discount %',
-    'Amount',
+    'Gross Subtotal',
     'Discount Amount',
-    'Total Amount',
+    'Net Amount',
+    'VAT Amount',
+    'Special Charges',
+    'Special Charges Breakdown',
+    'GRAND TOTAL',
     'Notes',
     'Status',
     'Created By',
@@ -171,6 +266,18 @@ $export_data[] = [
 // Data rows
 $counter = 1;
 foreach ($sales_orders as $so) {
+    $calc = computeSOAmounts($so, $special_charges_map);
+
+    // Build special charges breakdown string for a single cell
+    $special_breakdown = '';
+    if (!empty($calc['special_items'])) {
+        $parts = [];
+        foreach ($calc['special_items'] as $item) {
+            $parts[] = $item['kind'] . ': ₱' . number_format($item['amount'], 2);
+        }
+        $special_breakdown = implode('; ', $parts);
+    }
+
     $export_data[] = [
         $counter,
         $so['sales_order_no'] ?? '',
@@ -192,9 +299,13 @@ foreach ($sales_orders as $so) {
         number_format($so['quantity'] ?? 0),
         number_format($so['unit_price'] ?? 0, 2),
         $so['discount_percent'] ? $so['discount_percent'] . '%' : '0%',
-        number_format($so['amount'] ?? 0, 2),
-        number_format($so['discount_amount'] ?? 0, 2),
-        number_format($so['amount'] ?? 0, 2),
+        number_format($calc['gross_subtotal'], 2),
+        number_format($calc['discount_amount'], 2),
+        number_format($calc['net_amount'], 2),
+        number_format($calc['vat_amount'], 2),
+        number_format($calc['special_total'], 2),
+        $special_breakdown,
+        number_format($calc['grand_total'], 2),
         $so['notes'] ?? '',
         $so['status'] ?? '',
         $so['created_by'] ?? '',
@@ -209,17 +320,23 @@ foreach ($sales_orders as $so) {
 $export_data[] = [];
 $export_data[] = ['--- END OF REPORT ---'];
 $export_data[] = ['Total Sales Orders Exported: ' . count($sales_orders)];
-$export_data[] = ['Total Amount: ₱ ' . number_format($total_amount, 2)];
+$export_data[] = ['Gross Subtotal: ₱ ' . number_format($grand_subtotal_sum, 2)];
+$export_data[] = ['Total Discount: ₱ ' . number_format($grand_discount_sum, 2)];
+$export_data[] = ['Net Amount: ₱ ' . number_format($grand_net_sum, 2)];
+$export_data[] = ['Total VAT: ₱ ' . number_format($grand_vat_sum, 2)];
+$export_data[] = ['Total Special Charges: ₱ ' . number_format($grand_charges_sum, 2)];
+$export_data[] = ['GRAND TOTAL: ₱ ' . number_format($grand_total_sum, 2)];
 
-// Calculate summary by status
+// Calculate summary by status (now includes grand_total)
 $status_summary = [];
 foreach ($sales_orders as $so) {
     $status = $so['status'] ?? 'Unknown';
     if (!isset($status_summary[$status])) {
         $status_summary[$status] = ['count' => 0, 'amount' => 0];
     }
+    $calc = computeSOAmounts($so, $special_charges_map);
     $status_summary[$status]['count']++;
-    $status_summary[$status]['amount'] += floatval($so['amount'] ?? 0);
+    $status_summary[$status]['amount'] += $calc['grand_total'];
 }
 
 $export_data[] = ['Status Summary:'];

@@ -2,10 +2,7 @@
 // get_customer_pricing.php
 session_start();
 
-
 require_once __DIR__ . '/../config/config.php';
-
-
 
 header('Content-Type: application/json');
 
@@ -22,9 +19,11 @@ if (empty($customer_code)) {
 }
 
 // Get pricing and truck information in one query
+// effective_unit_price prefers rate_per_trip, then minimum_charge, then 0
 $query = "
     SELECT 
         cp.*,
+        COALESCE(cp.rate_per_trip, cp.minimum_charge, 0) AS effective_unit_price,
         tm.id as truck_id,
         tm.truck_code,
         tm.brand,
@@ -61,8 +60,7 @@ while ($row = $result->fetch_assoc()) {
     }
 }
 
-// Reformat trucks data to be keyed by truck_code for backward compatibility
-// but also provide plate_number lookup
+// Reformat trucks data
 $trucks_by_code = [];
 $trucks_by_plate = [];
 
@@ -74,6 +72,10 @@ foreach ($trucks_map as $plate_number => $truck_details) {
 echo json_encode([
     'success' => true,
     'pricing' => $pricing,
-    'trucks' => $trucks_by_code,        // For backward compatibility
-    'trucks_by_plate' => $trucks_by_plate // New: lookup by plate number
+    'trucks' => $trucks_by_code,
+    'trucks_by_plate' => $trucks_by_plate
 ]);
+
+$stmt->close();
+$conn->close();
+?>

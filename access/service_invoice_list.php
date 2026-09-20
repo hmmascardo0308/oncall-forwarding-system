@@ -366,13 +366,15 @@ if ($view_mode) {
     $subtotal = 0;
     $total_discount = 0;
     $total_vat = 0;
+    $total_charges = 0;      // NEW: aggregate special charges
     $grand_total = 0;
     
     foreach ($invoices as $item) {
-        $subtotal += floatval($item['amount']);
-        $total_discount += floatval($item['discount_amount']);
-        $total_vat += floatval($item['vat_amount']);
-        $grand_total += floatval($item['total_amount']);
+        $subtotal        += floatval($item['amount']);
+        $total_discount  += floatval($item['discount_amount']);
+        $total_vat       += floatval($item['vat_amount']);
+        $total_charges   += floatval($item['charge_amount'] ?? 0);  // NEW
+        $grand_total     += floatval($item['total_amount']);
     }
     
     // Check if invoice should be marked as paid (balance zero)
@@ -433,9 +435,11 @@ if ($view_mode) {
         }
     }
     
+    // NEW: also aggregate charge_amount per invoice in the list view
     $sql = "SELECT si.invoice_no, si.customer_code, si.customer_name, 
             COUNT(si.id) as item_count,
             SUM(si.total_amount) as total_amount,
+            SUM(si.charge_amount) as total_charges,
             si.payment_status, si.payment_method, si.payment_terms,
             si.amount_paid, si.additional_fee, si.due_date,
             MAX(si.created_date) as latest_date,
@@ -640,7 +644,7 @@ function getDisplayStatus($payment_status, $due_date) {
             <div class="form-card" style="margin-bottom:24px;">
                 <div class="form-card-title"><i data-lucide="list" style="width:16px;height:16px;"></i> Invoice Line Items</div>
                 <div class="table-wrapper" style="overflow-x:auto;">
-                    <table style="min-width:1200px;">
+                    <table style="min-width:1350px;">
                         <thead>
                             <tr>
                                 <th style="min-width:100px;">SO No.</th>
@@ -652,6 +656,7 @@ function getDisplayStatus($payment_status, $due_date) {
                                 <th style="text-align:right;min-width:100px;">Unit Price</th>
                                 <th style="text-align:right;min-width:100px;">Discount</th>
                                 <th style="text-align:right;min-width:100px;">VAT</th>
+                                <th style="text-align:right;min-width:120px;">Special Charges</th>
                                 <th style="text-align:right;min-width:120px;">Total</th>
                             </tr>
                         </thead>
@@ -660,13 +665,15 @@ function getDisplayStatus($payment_status, $due_date) {
                             $subtotal = 0;
                             $total_discount = 0;
                             $total_vat = 0;
+                            $total_charges = 0;
                             $grand_total = 0;
                             
                             foreach ($invoices as $item): 
-                                $subtotal += floatval($item['amount']);
-                                $total_discount += floatval($item['discount_amount']);
-                                $total_vat += floatval($item['vat_amount']);
-                                $grand_total += floatval($item['total_amount']);
+                                $subtotal        += floatval($item['amount']);
+                                $total_discount  += floatval($item['discount_amount']);
+                                $total_vat       += floatval($item['vat_amount']);
+                                $total_charges   += floatval($item['charge_amount'] ?? 0);
+                                $grand_total     += floatval($item['total_amount']);
                             ?>
                                 <tr>
                                     <td><strong><?php echo htmlspecialchars($item['sales_order_no'] ?: '—'); ?></strong></td>
@@ -701,25 +708,35 @@ function getDisplayStatus($payment_status, $due_date) {
                                     <td style="text-align:right;">₱<?php echo number_format($item['unit_price'], 2); ?></td>
                                     <td style="text-align:right;color:#dc2626;">₱<?php echo number_format($item['discount_amount'], 2); ?></td>
                                     <td style="text-align:right;">₱<?php echo number_format($item['vat_amount'], 2); ?></td>
+                                    <!-- NEW: Special Charges column -->
+                                    <td style="text-align:right;color:#b45309;font-weight:600;">
+                                        ₱<?php echo number_format(floatval($item['charge_amount'] ?? 0), 2); ?>
+                                    </td>
                                     <td style="text-align:right;font-weight:600;">₱<?php echo number_format($item['total_amount'], 2); ?></td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                         <tfoot>
                             <tr>
-                                <td colspan="9" style="text-align:right;font-weight:600;">Subtotal:</td>
+                                <td colspan="10" style="text-align:right;font-weight:600;">Subtotal:</td>
                                 <td style="text-align:right;font-weight:600;">₱<?php echo number_format($subtotal, 2); ?></td>
                             </tr>
                             <tr>
-                                <td colspan="9" style="text-align:right;font-weight:600;">Total Discount:</td>
+                                <td colspan="10" style="text-align:right;font-weight:600;">Total Discount:</td>
                                 <td style="text-align:right;font-weight:600;color:#dc2626;">−₱<?php echo number_format($total_discount, 2); ?></td>
                             </tr>
                             <tr>
-                                <td colspan="9" style="text-align:right;font-weight:600;">Total VAT:</td>
+                                <td colspan="10" style="text-align:right;font-weight:600;">Total VAT:</td>
                                 <td style="text-align:right;font-weight:600;">₱<?php echo number_format($total_vat, 2); ?></td>
                             </tr>
+                            <?php if ($total_charges > 0): ?>
+                            <tr>
+                                <td colspan="10" style="text-align:right;font-weight:600;color:#b45309;">Total Special Charges:</td>
+                                <td style="text-align:right;font-weight:600;color:#b45309;">₱<?php echo number_format($total_charges, 2); ?></td>
+                            </tr>
+                            <?php endif; ?>
                             <tr style="border-top:2px solid #16a34a;">
-                                <td colspan="9" style="text-align:right;font-weight:700;font-size:16px;color:#16a34a;">GRAND TOTAL:</td>
+                                <td colspan="10" style="text-align:right;font-weight:700;font-size:16px;color:#16a34a;">GRAND TOTAL:</td>
                                 <td style="text-align:right;font-weight:700;font-size:16px;color:#16a34a;">₱<?php echo number_format($grand_total, 2); ?></td>
                             </tr>
                         </tfoot>
@@ -989,6 +1006,12 @@ function getDisplayStatus($payment_status, $due_date) {
                             <span>VAT Amount</span>
                             <span>₱<?php echo number_format($total_vat, 2); ?></span>
                         </div>
+                        <?php if ($total_charges > 0): ?>
+                        <div class="totals-row" style="background:#fffbeb;border-radius:6px;padding-left:8px;padding-right:8px;">
+                            <span style="color:#b45309;">Special Charges</span>
+                            <span style="color:#b45309;font-weight:700;">₱<?php echo number_format($total_charges, 2); ?></span>
+                        </div>
+                        <?php endif; ?>
                         <div class="totals-row total-final">
                             <span>Total Amount</span>
                             <span class="amount-due">₱<?php echo number_format($grand_total, 2); ?></span>
@@ -1081,6 +1104,7 @@ function getDisplayStatus($payment_status, $due_date) {
                         $display_status = getDisplayStatus($inv['payment_status'] ?? '', $inv['due_date'] ?? '');
                         $status_info = getStatusInfo($display_status);
                         $inv_total = floatval($inv['total_amount'] ?? 0);
+                        $inv_charges = floatval($inv['total_charges'] ?? 0);  // NEW
                         $inv_paid = getTotalPaid($conn, $inv['invoice_no']);
                         $inv_fee = floatval($inv['additional_fee'] ?? 0);
                         $inv_balance = $inv_total - $inv_paid + $inv_fee;
@@ -1109,6 +1133,11 @@ function getDisplayStatus($payment_status, $due_date) {
                                 <span class="<?php echo $status_info['css_class']; ?>">
                                     <?php echo $status_info['display']; ?>
                                 </span>
+                                <?php if ($inv_charges > 0): ?>
+                                <span style="font-size:11px;color:#b45309;font-weight:600;">
+                                    Charges: ₱<?php echo number_format($inv_charges, 2); ?>
+                                </span>
+                                <?php endif; ?>
                                 <?php if ($inv_paid > 0): ?>
                                 <span style="font-size:11px;color:var(--text-muted);">
                                     Paid: ₱<?php echo number_format($inv_paid, 2); ?>

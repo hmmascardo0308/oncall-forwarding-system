@@ -27,37 +27,74 @@ $base_user_type = $is_admin ? 'admin' : 'user';
 $current_page = basename($_SERVER['PHP_SELF']);
 requireAccess($user_roles, $current_page, $allowed_pages);
 
+// ---------------------------------------------------------------
+// Default date filter: current week (Monday to Sunday)
+// ---------------------------------------------------------------
+$today = new DateTime('now', new DateTimeZone('Asia/Manila'));
+$dayOfWeek = (int)$today->format('N'); // 1 = Monday, 7 = Sunday
+$monday = clone $today;
+$monday->modify('-' . ($dayOfWeek - 1) . ' days');
+$sunday = clone $monday;
+$sunday->modify('+6 days');
+
+$default_date_from = $monday->format('Y-m-d');
+$default_date_to   = $sunday->format('Y-m-d');
+
 // Get filter parameters
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
-$delivery_status_filter = isset($_GET['delivery_status']) ? trim($_GET['delivery_status']) : '';
-$payment_status_filter = isset($_GET['payment_status']) ? trim($_GET['payment_status']) : '';
-$po_status_filter = isset($_GET['po_status']) ? trim($_GET['po_status']) : '';
+$purchase_type_filter = isset($_GET['purchase_type']) ? trim($_GET['purchase_type']) : '';
 $supplier_filter = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
-$date_from = isset($_GET['date_from']) ? trim($_GET['date_from']) : '';
-$date_to = isset($_GET['date_to']) ? trim($_GET['date_to']) : '';
-$sort_by = isset($_GET['sort_by']) ? trim($_GET['sort_by']) : 'created_at';
+$delivery_status_filter = isset($_GET['delivery_status']) ? trim($_GET['delivery_status']) : '';
+$delivery_payment_filter = isset($_GET['delivery_payment']) ? trim($_GET['delivery_payment']) : '';
+
+// Use default weekly range if no date parameters are provided at all
+$date_from = isset($_GET['date_from']) ? trim($_GET['date_from']) : $default_date_from;
+$date_to   = isset($_GET['date_to'])   ? trim($_GET['date_to'])   : $default_date_to;
+
+// If the user explicitly cleared the dates via the "Clear" link, we still want the weekly default.
+// Detect "clear" by checking if the request has no filter keys at all besides possibly page.
+$has_any_filter = isset($_GET['search']) || isset($_GET['purchase_type']) || isset($_GET['supplier'])
+    || isset($_GET['delivery_status']) || isset($_GET['delivery_payment'])
+    || isset($_GET['date_from']) || isset($_GET['date_to']);
+
+$sort_by = isset($_GET['sort_by']) ? trim($_GET['sort_by']) : 'po_date';
 $sort_order = isset($_GET['sort_order']) ? trim($_GET['sort_order']) : 'DESC';
 
-// Build query — GROUP BY po_number so each PO is shown only once.
-// All header-level columns are the same for every item row of the same PO,
-// so MIN() just picks one value without changing it.
+// Build query — one row per item (not grouped by po_number)
 $query = "SELECT 
-            po_number,
-            MIN(status)            AS status,
-            MIN(created_at)        AS created_at,
-            MIN(delivered_date)    AS delivered_date,
-            MIN(supplier_name)     AS supplier_name,
-            MIN(purchase_type)     AS purchase_type,
-            MIN(net_amount_due)    AS net_amount_due,
-            MIN(delivery_status)   AS delivery_status,
-            MIN(delivery_payment)  AS delivery_payment,
-            MIN(created_by)        AS created_by
-          FROM purchase_order WHERE 1=1";
+            po.id,
+            po.po_number,
+            po.po_date,
+            po.supplier_code,
+            COALESCE(sl.supplier_name, po.supplier_name) AS supplier_name,
+            po.item_code,
+            COALESCE(im.item_name, po.item) AS item_name,
+            po.purchase_type,
+            po.truck_code,
+            tm.plate_number,
+            po.qty_ordered,
+            po.unit,
+            po.unit_cost,
+            po.net_amount_due,
+            po.total_amount_paid,
+            po.payment_method,
+            po.delivery_status,
+            po.delivery_payment,
+            po.created_by,
+            po.created_at
+          FROM purchase_order po
+          LEFT JOIN supplier_lists sl 
+                 ON sl.supplier_code = po.supplier_code COLLATE utf8mb4_general_ci
+          LEFT JOIN item_masterlist im 
+                 ON im.item_code = po.item_code COLLATE utf8mb4_general_ci
+          LEFT JOIN truck_masterlist tm 
+                 ON tm.truck_code = po.truck_code COLLATE utf8mb4_general_ci
+          WHERE 1=1";
 $params = [];
 $types = "";
 
 if (!empty($search)) {
-    $query .= " AND (po_number LIKE ? OR supplier_name LIKE ? OR supplier_code LIKE ? OR item LIKE ? OR item_code LIKE ? OR created_by LIKE ?)";
+    $query .= " AND (po.po_number LIKE ? OR po.supplier_name LIKE ? OR po.supplier_code LIKE ? OR sl.supplier_name LIKE ? OR po.item LIKE ? OR po.item_code LIKE ? OR im.item_name LIKE ? OR po.created_by LIKE ?)";
     $search_param = "%$search%";
     $params[] = $search_param;
     $params[] = $search_param;
@@ -65,55 +102,54 @@ if (!empty($search)) {
     $params[] = $search_param;
     $params[] = $search_param;
     $params[] = $search_param;
-    $types .= "ssssss";
+    $params[] = $search_param;
+    $params[] = $search_param;
+    $types .= "ssssssss";
 }
 
-if (!empty($delivery_status_filter)) {
-    $query .= " AND delivery_status = ?";
-    $params[] = $delivery_status_filter;
-    $types .= "s";
-}
-
-if (!empty($payment_status_filter)) {
-    $query .= " AND delivery_payment = ?";
-    $params[] = $payment_status_filter;
-    $types .= "s";
-}
-
-if (!empty($po_status_filter)) {
-    $query .= " AND status = ?";
-    $params[] = $po_status_filter;
+if (!empty($purchase_type_filter)) {
+    $query .= " AND po.purchase_type = ?";
+    $params[] = $purchase_type_filter;
     $types .= "s";
 }
 
 if (!empty($supplier_filter)) {
-    $query .= " AND supplier_name LIKE ?";
+    $query .= " AND po.supplier_code LIKE ?";
     $params[] = "%$supplier_filter%";
     $types .= "s";
 }
 
+if (!empty($delivery_status_filter)) {
+    $query .= " AND po.delivery_status = ?";
+    $params[] = $delivery_status_filter;
+    $types .= "s";
+}
+
+if (!empty($delivery_payment_filter)) {
+    $query .= " AND po.delivery_payment = ?";
+    $params[] = $delivery_payment_filter;
+    $types .= "s";
+}
+
 if (!empty($date_from)) {
-    $query .= " AND DATE(created_at) >= ?";
+    $query .= " AND DATE(po.po_date) >= ?";
     $params[] = $date_from;
     $types .= "s";
 }
 
 if (!empty($date_to)) {
-    $query .= " AND DATE(created_at) <= ?";
+    $query .= " AND DATE(po.po_date) <= ?";
     $params[] = $date_to;
     $types .= "s";
 }
 
-// Add GROUP BY (one row per PO)
-$query .= " GROUP BY po_number";
-
 // Add sorting
-$allowed_sort = ['po_number', 'status', 'created_at', 'delivered_date', 'supplier_name', 'purchase_type', 'net_amount_due', 'delivery_status', 'delivery_payment', 'created_by'];
+$allowed_sort = ['po_date', 'po_number', 'supplier_code', 'item_code', 'purchase_type', 'qty_ordered', 'unit_cost', 'net_amount_due', 'total_amount_paid', 'delivery_status', 'delivery_payment', 'payment_method', 'created_by'];
 if (!in_array($sort_by, $allowed_sort)) {
-    $sort_by = 'created_at';
+    $sort_by = 'po_date';
 }
 $sort_order = strtoupper($sort_order) === 'ASC' ? 'ASC' : 'DESC';
-$query .= " ORDER BY $sort_by $sort_order";
+$query .= " ORDER BY po.$sort_by $sort_order, po.id ASC";
 
 // Execute query
 if (!empty($params)) {
@@ -136,6 +172,70 @@ if ($result) {
     }
 }
 
+/**
+ * Group items by PO number.
+ * Debit / Credit / Remarks are header-level (same value across item rows of the same PO),
+ * so we take them from the first item row of each group.
+ */
+$grouped_pos = [];
+foreach ($purchase_orders as $row) {
+    $po_num = $row['po_number'];
+
+    if (!isset($grouped_pos[$po_num])) {
+        // Credit now comes directly from total_amount_paid
+        $credit = $row['total_amount_paid'] ?? 0;
+
+        // Build remarks string for the PO
+        $remarks_parts = [];
+        if (!empty($row['delivery_status']))        $remarks_parts[] = $row['delivery_status'];
+        if (!empty($row['delivery_payment']))       $remarks_parts[] = $row['delivery_payment'];
+        if (!empty($row['payment_method']))         $remarks_parts[] = $row['payment_method'];
+        $remarks = implode(' | ', $remarks_parts) ?: 'N/A';
+
+        $grouped_pos[$po_num] = [
+            'po_number' => $po_num,
+            'items'     => [],
+            // Header-level values taken from the first item row
+            'debit'     => (float)($row['net_amount_due'] ?? 0),
+            'credit'    => (float)$credit,
+            'remarks'   => $remarks,
+        ];
+    }
+
+    $grouped_pos[$po_num]['items'][] = $row;
+}
+
+// Pre-compute totals for footer (once per PO, not per item)
+$total_debit  = 0;
+$total_credit = 0;
+foreach ($grouped_pos as $group) {
+    $total_debit  += $group['debit'];
+    $total_credit += $group['credit'];
+}
+
+// Get unique purchase types for filter dropdown
+$purchase_type_query = "SELECT DISTINCT purchase_type FROM purchase_order WHERE purchase_type IS NOT NULL AND purchase_type != '' ORDER BY purchase_type";
+$purchase_type_result = $conn->query($purchase_type_query);
+$purchase_types = [];
+if ($purchase_type_result) {
+    while ($row = $purchase_type_result->fetch_assoc()) {
+        $purchase_types[] = $row['purchase_type'];
+    }
+}
+
+// Get unique suppliers for filter dropdown (use supplier_lists for name)
+$supplier_query = "SELECT DISTINCT sl.supplier_code, sl.supplier_name 
+                   FROM supplier_lists sl 
+                   WHERE sl.supplier_code IS NOT NULL AND sl.supplier_code != '' 
+                   ORDER BY sl.supplier_code";
+$supplier_result = $conn->query($supplier_query);
+$suppliers = [];
+if ($supplier_result) {
+    while ($row = $supplier_result->fetch_assoc()) {
+        $suppliers[] = $row;
+    }
+}
+
 // Get unique delivery statuses for filter dropdown
 $delivery_status_query = "SELECT DISTINCT delivery_status FROM purchase_order WHERE delivery_status IS NOT NULL AND delivery_status != '' ORDER BY delivery_status";
 $delivery_status_result = $conn->query($delivery_status_query);
@@ -146,70 +246,14 @@ if ($delivery_status_result) {
     }
 }
 
-// Get unique payment statuses for filter dropdown
-$payment_status_query = "SELECT DISTINCT delivery_payment FROM purchase_order WHERE delivery_payment IS NOT NULL AND delivery_payment != '' ORDER BY delivery_payment";
-$payment_status_result = $conn->query($payment_status_query);
-$payment_statuses = [];
-if ($payment_status_result) {
-    while ($row = $payment_status_result->fetch_assoc()) {
-        $payment_statuses[] = $row['delivery_payment'];
+// Get unique delivery payments for filter dropdown
+$delivery_payment_query = "SELECT DISTINCT delivery_payment FROM purchase_order WHERE delivery_payment IS NOT NULL AND delivery_payment != '' ORDER BY delivery_payment";
+$delivery_payment_result = $conn->query($delivery_payment_query);
+$delivery_payments = [];
+if ($delivery_payment_result) {
+    while ($row = $delivery_payment_result->fetch_assoc()) {
+        $delivery_payments[] = $row['delivery_payment'];
     }
-}
-
-// Get unique PO statuses for filter dropdown
-$po_status_query = "SELECT DISTINCT status FROM purchase_order WHERE status IS NOT NULL AND status != '' ORDER BY status";
-$po_status_result = $conn->query($po_status_query);
-$po_statuses = [];
-if ($po_status_result) {
-    while ($row = $po_status_result->fetch_assoc()) {
-        $po_statuses[] = $row['status'];
-    }
-}
-
-// Get unique suppliers for filter dropdown
-$supplier_query = "SELECT DISTINCT supplier_name FROM purchase_order WHERE supplier_name IS NOT NULL AND supplier_name != '' ORDER BY supplier_name";
-$supplier_result = $conn->query($supplier_query);
-$suppliers = [];
-if ($supplier_result) {
-    while ($row = $supplier_result->fetch_assoc()) {
-        $suppliers[] = $row['supplier_name'];
-    }
-}
-
-// Function to get status badge color (delivery status)
-function getStatusBadgeClass($status) {
-    $status = strtolower($status);
-    if (strpos($status, 'completed') !== false || strpos($status, 'delivered') !== false) {
-        return 'badge-success';
-    } elseif (strpos($status, 'pending') !== false) {
-        return 'badge-warning';
-    } elseif (strpos($status, 'cancelled') !== false || strpos($status, 'canceled') !== false) {
-        return 'badge-danger';
-    } elseif (strpos($status, 'processing') !== false || strpos($status, 'ordered') !== false) {
-        return 'badge-info';
-    } else {
-        return 'badge-secondary';
-    }
-}
-
-// Function to get PO status badge class (Created / Approved / Rejected / Completed / Cancelled)
-function getPoStatusBadgeClass($status) {
-    switch (strtolower(trim($status ?? ''))) {
-        case 'created':   return 'status-created';
-        case 'approved':  return 'status-approved';
-        case 'rejected':  return 'status-rejected';
-        case 'completed': return 'status-completed';
-        case 'cancelled':
-        case 'canceled':  return 'status-cancelled';
-        default:          return 'status-pending';
-    }
-}
-
-// Function to get PO status display text
-function getPoStatusText($status) {
-    $status = trim($status ?? '');
-    if ($status === '') return 'Created';
-    return $status;
 }
 
 // Function to format currency
@@ -231,11 +275,8 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <!-- <link rel="stylesheet" href="css/home.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/po_list_all.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
-  
-
 </head>
 <body>
 
@@ -273,13 +314,13 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 <h1>📋 Purchase Orders</h1>
                 <div class="header-actions">
                     <!-- EXPORT BUTTON -->
-                    <a href="export_purchase_order_list.php<?php 
+                    <!-- <a href="export_purchase_order_list.php<?php 
                         $params = [];
                         if ($search) $params[] = 'search=' . urlencode($search);
-                        if ($delivery_status_filter) $params[] = 'delivery_status=' . urlencode($delivery_status_filter);
-                        if ($payment_status_filter) $params[] = 'payment_status=' . urlencode($payment_status_filter);
-                        if ($po_status_filter) $params[] = 'po_status=' . urlencode($po_status_filter);
+                        if ($purchase_type_filter) $params[] = 'purchase_type=' . urlencode($purchase_type_filter);
                         if ($supplier_filter) $params[] = 'supplier=' . urlencode($supplier_filter);
+                        if ($delivery_status_filter) $params[] = 'delivery_status=' . urlencode($delivery_status_filter);
+                        if ($delivery_payment_filter) $params[] = 'delivery_payment=' . urlencode($delivery_payment_filter);
                         if ($date_from) $params[] = 'date_from=' . urlencode($date_from);
                         if ($date_to) $params[] = 'date_to=' . urlencode($date_to);
                         if ($sort_by) $params[] = 'sort_by=' . urlencode($sort_by);
@@ -290,7 +331,27 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                        title="Export to Excel">
                         <i data-lucide="file-spreadsheet"></i>
                         <span>Export to Excel</span>
-                    </a>
+                    </a> -->
+                    <!-- Add this after the Export to Excel button -->
+<a href="export_po_pdf.php<?php 
+    $params = [];
+    if ($search) $params[] = 'search=' . urlencode($search);
+    if ($purchase_type_filter) $params[] = 'purchase_type=' . urlencode($purchase_type_filter);
+    if ($supplier_filter) $params[] = 'supplier=' . urlencode($supplier_filter);
+    if ($delivery_status_filter) $params[] = 'delivery_status=' . urlencode($delivery_status_filter);
+    if ($delivery_payment_filter) $params[] = 'delivery_payment=' . urlencode($delivery_payment_filter);
+    if ($date_from) $params[] = 'date_from=' . urlencode($date_from);
+    if ($date_to) $params[] = 'date_to=' . urlencode($date_to);
+    if ($sort_by) $params[] = 'sort_by=' . urlencode($sort_by);
+    if ($sort_order) $params[] = 'sort_order=' . urlencode($sort_order);
+    echo $params ? '?' . implode('&', $params) : '';
+?>" 
+   class="btn-export btn-pdf" 
+   title="Export to PDF"
+   target="_blank">
+    <i data-lucide="file-text"></i>
+    <span>Export to PDF</span>
+</a>
                 </div>
             </div>
 
@@ -302,36 +363,12 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 </div>
 
                 <div class="filter-group">
-                    <label>PO Status:</label>
-                    <select name="po_status">
+                    <label>Purpose:</label>
+                    <select name="purchase_type">
                         <option value="">All</option>
-                        <?php foreach ($po_statuses as $status): ?>
-                            <option value="<?php echo htmlspecialchars($status); ?>" <?php echo $po_status_filter == $status ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($status); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="filter-group">
-                    <label>Delivery Status:</label>
-                    <select name="delivery_status">
-                        <option value="">All</option>
-                        <?php foreach ($delivery_statuses as $status): ?>
-                            <option value="<?php echo htmlspecialchars($status); ?>" <?php echo $delivery_status_filter == $status ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($status); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="filter-group">
-                    <label>Payment Status:</label>
-                    <select name="payment_status">
-                        <option value="">All</option>
-                        <?php foreach ($payment_statuses as $status): ?>
-                            <option value="<?php echo htmlspecialchars($status); ?>" <?php echo $payment_status_filter == $status ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($status); ?>
+                        <?php foreach ($purchase_types as $ptype): ?>
+                            <option value="<?php echo htmlspecialchars($ptype); ?>" <?php echo $purchase_type_filter == $ptype ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($ptype); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -342,8 +379,32 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                     <select name="supplier">
                         <option value="">All Suppliers</option>
                         <?php foreach ($suppliers as $supplier): ?>
-                            <option value="<?php echo htmlspecialchars($supplier); ?>" <?php echo $supplier_filter == $supplier ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($supplier); ?>
+                            <option value="<?php echo htmlspecialchars($supplier['supplier_code']); ?>" <?php echo $supplier_filter == $supplier['supplier_code'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($supplier['supplier_code'] . ' - ' . $supplier['supplier_name']); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Delivery Status:</label>
+                    <select name="delivery_status">
+                        <option value="">All</option>
+                        <?php foreach ($delivery_statuses as $dstatus): ?>
+                            <option value="<?php echo htmlspecialchars($dstatus); ?>" <?php echo $delivery_status_filter == $dstatus ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($dstatus); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Delivery Payment:</label>
+                    <select name="delivery_payment">
+                        <option value="">All</option>
+                        <?php foreach ($delivery_payments as $dpayment): ?>
+                            <option value="<?php echo htmlspecialchars($dpayment); ?>" <?php echo $delivery_payment_filter == $dpayment ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($dpayment); ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -365,10 +426,19 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
 
             <!-- Table -->
             <div class="table-container">
-                <?php if (count($purchase_orders) > 0): ?>
+                <?php if (count($grouped_pos) > 0): ?>
+                     <div class="table-scroll">
                     <table>
                         <thead>
                             <tr>
+                                <th>
+                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'po_date', 'sort_order' => $sort_by == 'po_date' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
+                                        Date
+                                        <?php if ($sort_by == 'po_date'): ?>
+                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
+                                        <?php endif; ?>
+                                    </a>
+                                </th>
                                 <th>
                                     <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'po_number', 'sort_order' => $sort_by == 'po_number' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
                                         PO Number
@@ -378,33 +448,17 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'status', 'sort_order' => $sort_by == 'status' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        Status
-                                        <?php if ($sort_by == 'status'): ?>
-                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
-                                        <?php endif; ?>
-                                    </a>
-                                </th>
-                                <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'created_at', 'sort_order' => $sort_by == 'created_at' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        Transaction Date
-                                        <?php if ($sort_by == 'created_at'): ?>
-                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
-                                        <?php endif; ?>
-                                    </a>
-                                </th>
-                                <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'delivered_date', 'sort_order' => $sort_by == 'delivered_date' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        Delivery Date
-                                        <?php if ($sort_by == 'delivered_date'): ?>
-                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
-                                        <?php endif; ?>
-                                    </a>
-                                </th>
-                                <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'supplier_name', 'sort_order' => $sort_by == 'supplier_name' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
+                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'supplier_code', 'sort_order' => $sort_by == 'supplier_code' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
                                         Supplier
-                                        <?php if ($sort_by == 'supplier_name'): ?>
+                                        <?php if ($sort_by == 'supplier_code'): ?>
+                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
+                                        <?php endif; ?>
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'item_code', 'sort_order' => $sort_by == 'item_code' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
+                                        Item
+                                        <?php if ($sort_by == 'item_code'): ?>
                                             <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
                                         <?php endif; ?>
                                     </a>
@@ -417,100 +471,136 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                         <?php endif; ?>
                                     </a>
                                 </th>
+                                <th style="color: #000000; font-weight: 900; font-size: 13px;">Other Description</th>
+                                <th>
+                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'qty_ordered', 'sort_order' => $sort_by == 'qty_ordered' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
+                                        Qty
+                                        <?php if ($sort_by == 'qty_ordered'): ?>
+                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
+                                        <?php endif; ?>
+                                    </a>
+                                </th>
+                                <th>
+                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'unit_cost', 'sort_order' => $sort_by == 'unit_cost' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
+                                        Unit Price
+                                        <?php if ($sort_by == 'unit_cost'): ?>
+                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
+                                        <?php endif; ?>
+                                    </a>
+                                </th>
                                 <th>
                                     <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'net_amount_due', 'sort_order' => $sort_by == 'net_amount_due' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        Amount
+                                        Debit Amount / <br> Total Amount
                                         <?php if ($sort_by == 'net_amount_due'): ?>
                                             <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
                                         <?php endif; ?>
                                     </a>
                                 </th>
                                 <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'delivery_status', 'sort_order' => $sort_by == 'delivery_status' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        PO Status
-                                        <?php if ($sort_by == 'delivery_status'): ?>
+                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'total_amount_paid', 'sort_order' => $sort_by == 'total_amount_paid' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
+                                        Credit Amount / <br> Total Paid
+                                        <?php if ($sort_by == 'total_amount_paid'): ?>
                                             <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
                                         <?php endif; ?>
                                     </a>
                                 </th>
-                                <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'delivery_payment', 'sort_order' => $sort_by == 'delivery_payment' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        Payment Status
-                                        <?php if ($sort_by == 'delivery_payment'): ?>
-                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
-                                        <?php endif; ?>
-                                    </a>
-                                </th>
-                                <th>
-                                    <a href="?<?php echo http_build_query(array_merge($_GET, ['sort_by' => 'created_by', 'sort_order' => $sort_by == 'created_by' && $sort_order == 'ASC' ? 'DESC' : 'ASC'])); ?>" style="color: #000000; font-weight: 900; font-size: 13px;">
-                                        Created By
-                                        <?php if ($sort_by == 'created_by'): ?>
-                                            <i data-lucide="<?php echo $sort_order == 'ASC' ? 'chevron-up' : 'chevron-down'; ?>" style="width:14px;height:14px;"></i>
-                                        <?php endif; ?>
-                                    </a>
-                                </th>
+                                <th style="color: #000000; font-weight: 900; font-size: 13px;">Balance</th>
+                                <th style="color: #000000; font-weight: 900; font-size: 13px;">Remarks</th>
                                 <th style="color: #000000; font-weight: 900; font-size: 13px;">Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($purchase_orders as $po): ?>
-                                <tr>
-                                    <td>
-                                        <strong><?php echo htmlspecialchars($po['po_number']); ?></strong>
-                                    </td>
-                                    <td>
-                                        <span class="badge-status-po <?php echo getPoStatusBadgeClass($po['status'] ?? ''); ?>">
-                                            <?php echo htmlspecialchars(getPoStatusText($po['status'] ?? '')); ?>
-                                        </span>
-                                    </td>
-                                    <td><?php echo date('M d, Y h:i A', strtotime($po['created_at'])); ?></td>
-                                    <td><?php echo $po['delivered_date'] ? date('M d, Y', strtotime($po['delivered_date'])) : '-'; ?></td>
-                                    <td>
-                                        <span class="text-ellipsis" title="<?php echo htmlspecialchars($po['supplier_name']); ?>">
-                                            <?php echo htmlspecialchars($po['supplier_name']); ?>
-                                        </span>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($po['purchase_type'] ?: 'N/A'); ?></td>
-                                    <td class="amount"><?php echo number_format($po['net_amount_due'] ?? 0, 2); ?></td>
-                                    <td>
-                                        <span class="badge-status <?php echo getStatusBadgeClass($po['delivery_status']); ?>">
-                                            <?php echo htmlspecialchars($po['delivery_status'] ?: 'N/A'); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <?php 
-                                        $payment = strtolower($po['delivery_payment'] ?? '');
-                                        $paymentClass = 'na';
-                                        if (strpos($payment, 'paid') !== false) $paymentClass = 'paid';
-                                        elseif (strpos($payment, 'unpaid') !== false || strpos($payment, 'not paid') !== false) $paymentClass = 'unpaid';
-                                        elseif (strpos($payment, 'partial') !== false) $paymentClass = 'partial';
-                                        ?>
-                                        <span class="badge-payment <?php echo $paymentClass; ?>">
-                                            <?php echo htmlspecialchars($po['delivery_payment'] ?: 'N/A'); ?>
-                                        </span>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($po['created_by'] ?: 'N/A'); ?></td>
-                                    <td>
-                                        <a href="purchase_orders_view.php?po_number=<?php echo urlencode($po['po_number']); ?>" class="action-btn" title="View PO">
-                                            <i data-lucide="eye"></i>
-                                            View
-                                        </a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
+    <?php foreach ($grouped_pos as $group): ?>
+        <?php 
+        $items = $group['items'];
+        $item_count = count($items);
+        $is_first = true;
+        ?>
+        <?php foreach ($items as $po): ?>
+            <tr>
+                <td><?php echo $po['po_date'] ? date('M d, Y', strtotime($po['po_date'])) : '-'; ?></td>
+                <td>
+                    <strong><?php echo htmlspecialchars($po['po_number']); ?></strong>
+                </td>
+                <td>
+                    <?php 
+                    echo htmlspecialchars($po['supplier_name'] ?: ($po['supplier_code'] ?: 'N/A'));
+                    ?>
+                </td>
+                <td>
+                    <?php 
+                    echo htmlspecialchars($po['item_name'] ?: ($po['item_code'] ?: 'N/A'));
+                    ?>
+                </td>
+                <td><?php echo htmlspecialchars($po['purchase_type'] ?: 'N/A'); ?></td>
+                <td>
+                    <?php 
+                    if (strcasecmp(trim($po['purchase_type'] ?? ''), 'For Truck Repair and Maintenance') === 0) {
+                        echo htmlspecialchars($po['plate_number'] ?: ($po['truck_code'] ?: '-'));
+                    } else {
+                        echo '-';
+                    }
+                    ?>
+                </td>
+                <td>
+                    <?php 
+                    $qty = $po['qty_ordered'] ?? '';
+                    $unit = $po['unit'] ?? '';
+                    echo htmlspecialchars(trim($qty . ' ' . $unit));
+                    ?>
+                </td>
+                <td class="amount"><?php echo number_format($po['unit_cost'] ?? 0, 2); ?></td>
+
+                <?php if ($is_first): ?>
+                    <!-- Debit / Credit / Balance / Remarks: merged across all items of this PO -->
+                    <td class="amount" rowspan="<?php echo $item_count; ?>">
+                        <?php echo number_format($group['debit'], 2); ?>
+                    </td>
+                    <td class="amount" rowspan="<?php echo $item_count; ?>">
+                        <?php echo number_format($group['credit'], 2); ?>
+                    </td>
+                    <td class="amount" rowspan="<?php echo $item_count; ?>">
+                        <?php 
+                        $balance = $group['debit'] - $group['credit'];
+                        echo number_format($balance, 2);
+                        ?>
+                    </td>
+                    <td rowspan="<?php echo $item_count; ?>">
+                        <?php echo htmlspecialchars($group['remarks']); ?>
+                    </td>
+
+                    <!-- View button: ONE per PO, spans all item rows -->
+                    <td rowspan="<?php echo $item_count; ?>" style="vertical-align: middle; text-align: center;">
+                        <a href="purchase_orders_view.php?po_number=<?php echo urlencode($po['po_number']); ?>" class="action-btn" title="View PO">
+                            <i data-lucide="eye"></i>
+                            View
+                        </a>
+                    </td>
+                <?php endif; ?>
+            </tr>
+            <?php $is_first = false; ?>
+        <?php endforeach; ?>
+    <?php endforeach; ?>
+</tbody>
                         <tfoot>
                             <tr>
-                                <td colspan="6" style="text-align: right; font-weight: 600;">Total Amount:</td>
+                                <td colspan="8" style="text-align: right; font-weight: 600;">Total:</td>
                                 <td class="amount" style="font-weight: 700;">
-                                    <?php echo number_format(array_sum(array_column($purchase_orders, 'net_amount_due')), 2); ?>
+                                    <?php echo number_format($total_debit, 2); ?>
                                 </td>
-                                <td colspan="4"></td>
+                                <td class="amount" style="font-weight: 700;">
+                                    <?php echo number_format($total_credit, 2); ?>
+                                </td>
+                                <td class="amount" style="font-weight: 700;">
+                                    <?php echo number_format($total_debit - $total_credit, 2); ?>
+                                </td>
+                                <td colspan="2"></td>
                             </tr>
                         </tfoot>
                     </table>
+                    </div>
                     <div class="table-footer">
-                        <span>Showing <?php echo count($purchase_orders); ?> record(s)</span>
+                        <span>Showing <?php echo count($grouped_pos); ?> PO(s), <?php echo count($purchase_orders); ?> item(s)</span>
                     </div>
                 <?php else: ?>
                     <div class="no-results">

@@ -1,12 +1,11 @@
 <?php
-
 // sales_order.php
 session_start();
 // Set timezone to match your location
 date_default_timezone_set('Asia/Manila');
 
 require_once __DIR__ . '/../config/config.php';
-require_once __DIR__ . '/../config/access_control.php'; // Include centralized access control
+require_once __DIR__ . '/../config/access_control.php';
 
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
@@ -16,29 +15,42 @@ if (!isset($_SESSION['user_id'])) {
 $user_id    = $_SESSION['user_id'];
 $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Guest';
-$full_name = $_SESSION['full_name'] ?? $username;
+$full_name  = $_SESSION['full_name'] ?? $username;
 
-// Convert comma-separated roles into array
 $user_roles = array_map('trim', explode(',', $user_type));
-
 $is_admin = in_array('admin', $user_roles);
 
-// Use centralized access control
 $current_page = basename($_SERVER['PHP_SELF']);
 requireAccess($user_roles, $current_page, $allowed_pages, 'home.php');
 
-// Role display name - now using centralized function
 $role_display_name = getRoleDisplayName($user_roles);
 
-// Preview SO number (just for display)
 $today  = date('Y');
-$preview_so = 'SO-' . $today . '-00001'; // simplified — no real count
+
+// Get the last SO number for the current year to generate the next preview
+$preview_so = 'SO-' . $today . '-00001'; // fallback default
+
+$so_query = "SELECT sales_order_no FROM sales_order 
+             WHERE sales_order_no LIKE 'SO-$today-%' 
+             ORDER BY id DESC LIMIT 1";
+$so_result = $conn->query($so_query);
+
+if ($so_result && $so_result->num_rows > 0) {
+    $last_so = $so_result->fetch_assoc()['sales_order_no'];
+    
+    // Extract the numeric suffix (last segment after the final dash)
+    $parts = explode('-', $last_so);
+    $last_number = (int) end($parts);
+    $next_number = $last_number + 1;
+    
+    $preview_so = 'SO-' . $today . '-' . str_pad($next_number, 5, '0', STR_PAD_LEFT);
+}
 
 $order_date_val    = date('Y-m-d');
-$delivery_date_val = date('Y-m-d'); // Same as order date
+$delivery_date_val = date('Y-m-d');
 
-// Fetch all customers for dropdown
-$customers_query = "SELECT customer_code, full_name, contact_person, full_address FROM customer_masterlist ORDER BY full_name";
+// Fetch all customers for dropdown (include with_special_process)
+$customers_query = "SELECT customer_code, full_name, contact_person, full_address, with_special_process FROM customer_masterlist ORDER BY full_name";
 $customers_result = $conn->query($customers_query);
 $customers = [];
 if ($customers_result && $customers_result->num_rows > 0) {
@@ -57,7 +69,7 @@ if ($so_list_result && $so_list_result->num_rows > 0) {
     }
 }
 
-// Fetch all drivers from employee_list where position = 'DRIVER' (including profile_picture)
+// Fetch all drivers
 $drivers_query = "SELECT employee_code, full_name, profile_picture FROM employee_list WHERE position = 'DRIVER' AND status = 'active' ORDER BY full_name";
 $drivers_result = $conn->query($drivers_query);
 $drivers = [];
@@ -65,6 +77,19 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
     while ($row = $drivers_result->fetch_assoc()) {
         $drivers[] = $row;
     }
+}
+
+// Fetch special charge kinds
+$charge_kinds = [];
+$charge_kinds_query = "SELECT DISTINCT charge_kind FROM special_charge_kinds ORDER BY charge_kind";
+$charge_kinds_result = @$conn->query($charge_kinds_query);
+if ($charge_kinds_result && $charge_kinds_result->num_rows > 0) {
+    while ($row = $charge_kinds_result->fetch_assoc()) {
+        $charge_kinds[] = $row['charge_kind'];
+    }
+}
+if (empty($charge_kinds)) {
+    $charge_kinds = ['Fuel Subsidy', 'Allowance', 'Toll Fee', 'Parking Fee', 'Waiting Time', 'Extra Labor', 'Other'];
 }
 ?>
 <!DOCTYPE html>
@@ -79,7 +104,6 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
     <style>
-        /* Driver Profile Picture Preview */
         .driver-image-preview {
             display: none;
             position: fixed;
@@ -94,9 +118,7 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             padding: 20px;
             backdrop-filter: blur(2px);
         }
-        .driver-image-preview.active {
-            display: flex;
-        }
+        .driver-image-preview.active { display: flex; }
         .driver-image-preview-card {
             background: #ffffff;
             border-radius: 16px;
@@ -171,14 +193,8 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             color: #94a3b8;
             gap: 8px;
         }
-        .driver-image-preview-placeholder i {
-            width: 56px;
-            height: 56px;
-        }
-        .driver-image-preview-placeholder span {
-            font-size: 12px;
-            font-weight: 500;
-        }
+        .driver-image-preview-placeholder i { width: 56px; height: 56px; }
+        .driver-image-preview-placeholder span { font-size: 12px; font-weight: 500; }
         .driver-image-preview-label {
             font-size: 11px;
             text-transform: uppercase;
@@ -187,17 +203,12 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             font-weight: 600;
             margin-bottom: 4px;
         }
-
-        /* Driver field with View button */
         .driver-field-wrap {
             display: flex;
             gap: 8px;
             align-items: stretch;
         }
-        .driver-field-wrap select {
-            flex: 1;
-            min-width: 0;
-        }
+        .driver-field-wrap select { flex: 1; min-width: 0; }
         .view-driver-btn {
             display: inline-flex;
             align-items: center;
@@ -222,9 +233,7 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             transform: translateY(-1px);
             box-shadow: 0 4px 10px rgba(37, 99, 235, 0.25);
         }
-        .view-driver-btn:active:not(:disabled) {
-            transform: translateY(0);
-        }
+        .view-driver-btn:active:not(:disabled) { transform: translateY(0); }
         .view-driver-btn:disabled {
             opacity: 0.45;
             cursor: not-allowed;
@@ -232,9 +241,37 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             border-color: #cbd5e1;
             color: #94a3b8;
         }
-        .view-driver-btn i {
-            width: 14px;
-            height: 14px;
+        .view-driver-btn i { width: 14px; height: 14px; }
+
+        /* Special Process badge */
+        .special-process-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+        }
+        .special-process-badge.none {
+            background: #f1f5f9;
+            color: #64748b;
+            border: 1px solid #e2e8f0;
+        }
+        .special-process-badge.has {
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #fcd34d;
+        }
+        .special-process-badge i { width: 14px; height: 14px; }
+
+        /* Special charges card highlight */
+        #specialChargesCard {
+            border-left: 4px solid #f59e0b;
+        }
+        .charge-kind-select, .charge-amount-input {
+            font-family: inherit;
         }
     </style>
 </head>
@@ -261,7 +298,6 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
     </div>
 </div>
 
-<!-- Include Sidebar -->
 <?php include 'sidebar.php'; ?>
 
 <main class="main-content">
@@ -309,7 +345,8 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
                             <option value="<?= htmlspecialchars($customer['customer_code']) ?>" 
                                     data-full-name="<?= htmlspecialchars($customer['full_name']) ?>"
                                     data-contact-person="<?= htmlspecialchars($customer['contact_person']) ?>"
-                                    data-full-address="<?= htmlspecialchars($customer['full_address']) ?>">
+                                    data-full-address="<?= htmlspecialchars($customer['full_address']) ?>"
+                                    data-special-process="<?= (int)($customer['with_special_process'] ?? 0) ?>">
                                 <?= htmlspecialchars($customer['full_name']) ?>
                             </option>
                         <?php endforeach; ?>
@@ -327,6 +364,17 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
                     <label>Delivery Date</label>
                     <input type="date" id="deliveryDate" value="<?= $delivery_date_val ?>" readonly>
                 </div>
+
+                <!-- Special Process Display -->
+                <div class="form-group">
+                    <label>Special Process</label>
+                    <div style="padding-top:6px;">
+                        <span id="specialProcessBadge" class="special-process-badge none">
+                            <i data-lucide="minus-circle"></i> None
+                        </span>
+                    </div>
+                </div>
+                <div class="form-group"></div>
 
                 <div class="form-group">
                     <label>Plate Number</label>
@@ -366,7 +414,6 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
                     <input type="text" id="paymentTerms" readonly placeholder="Select pricing first">
                 </div>
 
-                <!-- Driver Selection with View Driver button -->
                 <div class="form-group">
                     <label>Driver <span class="required">*</span></label>
                     <div class="driver-field-wrap">
@@ -441,7 +488,7 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
                             <td><input type="number" class="price-input" value="0.00" step="0.01" style="width:110px;text-align:right;" readonly></td>
                             <td><input type="number" class="discount-input" value="0" min="0" max="100" style="width:80px;text-align:center;"></td>
                             <td class="amount-display" style="font-weight:600;text-align:right;">₱0.00</td>
-                            <td><button type="button" class="remove-row-btn" disabled><i data-lucide="trash-2" style="width:16px;height:16px;"></i></button></td>
+                            <td><button type="button" class="remove-row-btn" disabled><i data-lucide="trash-2" style="width:16px;height:16px; color: black;"></i></button></td>
                          </tr>
                     </tbody>
                  </table>
@@ -449,6 +496,35 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             <div style="margin-top: 16px;">
                 <button type="button" id="addRowBtn" class="btn-secondary" disabled>
                     <i data-lucide="plus-circle"></i> Add Item
+                </button>
+            </div>
+        </div>
+
+        <!-- Special Charges (only visible when customer has special process) -->
+        <div class="form-card" id="specialChargesCard" style="display:none;">
+            <div class="form-card-title" style="font-size: 15px; font-weight: 800; color: black; display:flex; align-items:center; gap:8px;">
+                <i data-lucide="receipt" style="width:16px;height:16px;"></i> Special Charges
+                <span style="font-size:11px;font-weight:600;color:#b45309;background:#fef3c7;padding:3px 10px;border-radius:12px;margin-left:6px;">
+                    This customer requires special charges
+                </span>
+            </div>
+            <div class="table-wrapper">
+                <table id="specialChargesTable">
+                    <thead>
+                        <tr>
+                            <th style="width:50px;">#</th>
+                            <th style="min-width:200px;">Charge Kind</th>
+                            <th style="width:180px;">Amount</th>
+                            <th style="width:60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="specialChargesBody">
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top: 16px;">
+                <button type="button" id="addSpecialChargeBtn" class="btn-secondary">
+                    <i data-lucide="plus-circle"></i> Add Special Charge
                 </button>
             </div>
         </div>
@@ -461,9 +537,13 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
             </div>
 
             <div class="totals-box">
-                <div class="totals-row"><span  style="font-size: 15px; font-weight: 800; color: black;">Subtotal</span><span id="subtotal">₱0.00</span></div>
-                <div class="totals-row"><span  style="font-size: 15px; font-weight: 800; color: black;">Discount</span><span id="totalDiscount">−₱0.00</span></div>
-                <div class="totals-row"><span  style="font-size: 15px; font-weight: 800; color: black;">VAT (12%)</span><span id="vatAmount">₱0.00</span></div>
+                <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">Subtotal</span><span id="subtotal">₱0.00</span></div>
+                <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">Discount</span><span id="totalDiscount">−₱0.00</span></div>
+                <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">VAT (12%)</span><span id="vatAmount">₱0.00</span></div>
+                <div class="totals-row" id="specialChargesTotalRow" style="display:none; background:#fffbeb; border-radius:6px; padding-left:8px; padding-right:8px;">
+                    <span style="font-size: 15px; font-weight: 800; color: #b45309;">Special Charges</span>
+                    <span id="specialChargesTotal" style="color:#b45309; font-weight:700;">₱0.00</span>
+                </div>
                 <div class="totals-row total-final"><span>Total Due</span><span id="totalDue">₱0.00</span></div>
             </div>
         </div>
@@ -480,44 +560,25 @@ if ($drivers_result && $drivers_result->num_rows > 0) {
 <script>
 lucide.createIcons();
 
-// User roles from PHP
 const userRoles = <?php echo json_encode($user_roles); ?>;
-    
-// Allowed pages from PHP
 const allowedPages = <?php echo json_encode($allowed_pages); ?>;
+const chargeKinds = <?php echo json_encode($charge_kinds); ?>;
 
-// Modal element
 const modal = document.getElementById('accessModal');
 
-// Check access function
 function checkAccess(page) {
-    // Admin has access to everything
-    if (userRoles.includes('admin')) {
-        return true;
-    }
-    
-    // Check each role for access
+    if (userRoles.includes('admin')) return true;
     for (let role of userRoles) {
-        if (allowedPages[role] && allowedPages[role].includes(page)) {
-            return true;
-        }
+        if (allowedPages[role] && allowedPages[role].includes(page)) return true;
     }
-    
-    // Show modal if not allowed
     modal.style.display = 'flex';
-    return false; // Prevent navigation
+    return false;
 }
 
-// Close modal function
-function closeModal() {
-    modal.style.display = 'none';
-}
+function closeModal() { modal.style.display = 'none'; }
 
-// Close modal when clicking outside
 modal.addEventListener('click', function(e) {
-    if (e.target === modal) {
-        closeModal();
-    }
+    if (e.target === modal) closeModal();
 });
 
 // ============================================================
@@ -553,7 +614,6 @@ function openDriverImagePreview(driverCode, driverName, profilePicture) {
 
 function closeDriverImagePreview() {
     driverImagePreview.classList.remove('active');
-    // Clear content to avoid stale image flash on next open
     setTimeout(() => {
         if (!driverImagePreview.classList.contains('active')) {
             driverImagePreviewContent.innerHTML = '';
@@ -561,33 +621,23 @@ function closeDriverImagePreview() {
     }, 200);
 }
 
-// Opens preview using the currently selected driver in the dropdown
 function viewSelectedDriver() {
     const driverSelect = document.getElementById('driverSelect');
     const selectedOption = driverSelect.selectedOptions[0];
     const driverCode = driverSelect.value || '';
-
-    if (!driverCode || !selectedOption) {
-        return;
-    }
-
+    if (!driverCode || !selectedOption) return;
     const driverName = selectedOption.dataset.fullName || '';
     const profilePicture = selectedOption.dataset.profilePicture || '';
-
     openDriverImagePreview(driverCode, driverName, profilePicture);
 }
 
 closeDriverImagePreviewBtn?.addEventListener('click', closeDriverImagePreview);
-
 viewDriverBtn?.addEventListener('click', viewSelectedDriver);
 
 driverImagePreview?.addEventListener('click', function(e) {
-    if (e.target === driverImagePreview) {
-        closeDriverImagePreview();
-    }
+    if (e.target === driverImagePreview) closeDriverImagePreview();
 });
 
-// Close modal with Escape key
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         if (driverImagePreview.classList.contains('active')) {
@@ -603,12 +653,10 @@ let pricingData = {};
 let truckData = {};
 let truckDataByPlate = {};
 
-// Function to format currency with comma separators
 function formatCurrency(amount) {
     return '₱' + parseFloat(amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-// Function to enable price editing
 function enablePriceEditing() {
     document.querySelectorAll('.price-input').forEach(input => {
         input.readOnly = false;
@@ -617,7 +665,6 @@ function enablePriceEditing() {
     });
 }
 
-// Function to disable price editing
 function disablePriceEditing() {
     document.querySelectorAll('.price-input').forEach(input => {
         input.readOnly = true;
@@ -626,13 +673,11 @@ function disablePriceEditing() {
     });
 }
 
-// Function to fetch truck codes for selected customer
 async function fetchTruckCodes(customerCode) {
     if (!customerCode) {
         document.getElementById('truckCodeSelect').innerHTML = '<option value="">-- Select Truck Code --</option>';
         return;
     }
-    
     try {
         const response = await fetch(`get_customer_pricing.php?customer_code=${customerCode}`);
         const data = await response.json();
@@ -642,13 +687,11 @@ async function fetchTruckCodes(customerCode) {
             truckData = data.trucks;
             truckDataByPlate = data.trucks_by_plate || {};
             
-            // Populate truck code dropdown
             const truckCodeSelect = document.getElementById('truckCodeSelect');
             truckCodeSelect.innerHTML = '<option value="">-- Select Truck Code --</option>';
             truckCodeSelect.disabled = false;
             
             const uniqueTruckCodes = [...new Set(data.pricing.map(p => p.truck_code))];
-            
             uniqueTruckCodes.forEach(truckCode => {
                 const option = document.createElement('option');
                 option.value = truckCode;
@@ -656,18 +699,15 @@ async function fetchTruckCodes(customerCode) {
                 truckCodeSelect.appendChild(option);
             });
 
-            // Also populate plate number dropdown
             const plateNumberSelect = document.getElementById('plateNumberSelect');
             plateNumberSelect.innerHTML = '<option value="">-- Select Plate Number --</option>';
             plateNumberSelect.disabled = false;
             
             const uniquePlateNumbers = [...new Set(data.pricing.map(p => p.plate_number))];
-            
             uniquePlateNumbers.forEach(plateNumber => {
                 const option = document.createElement('option');
                 option.value = plateNumber;
                 option.textContent = plateNumber;
-                // Find the truck details for this plate number
                 const truckDetails = truckDataByPlate[plateNumber];
                 if (truckDetails) {
                     option.dataset.truckCode = truckDetails.truck_code;
@@ -684,20 +724,47 @@ async function fetchTruckCodes(customerCode) {
     }
 }
 
-// Function to find truck by plate number
 function findTruckByPlate(plateNumber) {
     if (!plateNumber) return null;
     return truckDataByPlate[plateNumber] || null;
 }
 
-// Function to find truck by truck code
 function findTruckByCode(truckCode) {
     if (!truckCode) return null;
     const trucks = truckData[truckCode] || [];
     return trucks.length > 0 ? trucks[0] : null;
 }
 
-// Function to handle plate number selection
+// Helper: build a pricing <option> element with all needed datasets
+function buildPricingOption(pricing) {
+    const option = document.createElement('option');
+
+    const ratePerTrip   = pricing.rate_per_trip   !== null && pricing.rate_per_trip   !== undefined ? pricing.rate_per_trip   : '';
+    const minimumCharge = pricing.minimum_charge  !== null && pricing.minimum_charge  !== undefined ? pricing.minimum_charge  : '';
+    const effective     = pricing.effective_unit_price !== null && pricing.effective_unit_price !== undefined
+                          ? pricing.effective_unit_price
+                          : (ratePerTrip !== '' ? ratePerTrip : (minimumCharge !== '' ? minimumCharge : 0));
+
+    option.value = JSON.stringify({
+        zone_from: pricing.zone_from,
+        zone_to: pricing.zone_to,
+        rate_per_trip: ratePerTrip,
+        minimum_charge: minimumCharge,
+        effective_unit_price: effective,
+        payment_terms: pricing.payment_terms
+    });
+    option.textContent = `${pricing.zone_from} - ${pricing.zone_to}`;
+
+    option.dataset.zoneFrom         = pricing.zone_from ?? '';
+    option.dataset.zoneTo           = pricing.zone_to ?? '';
+    option.dataset.ratePerTrip      = ratePerTrip;
+    option.dataset.minimumCharge    = minimumCharge;
+    option.dataset.effectivePrice   = effective;
+    option.dataset.paymentTerms     = pricing.payment_terms ?? '';
+
+    return option;
+}
+
 function handlePlateNumberSelect() {
     const plateNumber = document.getElementById('plateNumberSelect').value;
     const truckCodeSelect = document.getElementById('truckCodeSelect');
@@ -705,7 +772,6 @@ function handlePlateNumberSelect() {
     const pricingZoneSelect = document.getElementById('pricingZoneSelect');
     const truckTypeInput = document.getElementById('truckType');
 
-    // Reset if no plate number
     if (!plateNumber) {
         truckCodeSelect.value = '';
         assignedTruckSelect.innerHTML = '<option value="">-- Select Assigned Truck --</option>';
@@ -719,11 +785,9 @@ function handlePlateNumberSelect() {
         return;
     }
 
-    // Get truck details by plate number
     const truckDetails = findTruckByPlate(plateNumber);
 
     if (!truckDetails) {
-        console.error('No truck details found for plate:', plateNumber);
         truckCodeSelect.value = '';
         assignedTruckSelect.innerHTML = '<option value="">-- No truck details --</option>';
         assignedTruckSelect.disabled = true;
@@ -736,10 +800,8 @@ function handlePlateNumberSelect() {
         return;
     }
 
-    // Set truck code
     truckCodeSelect.value = truckDetails.truck_code;
 
-    // Populate and auto-select Assigned Truck
     assignedTruckSelect.innerHTML = '<option value="">-- Select Assigned Truck --</option>';
     const assignedTruckOption = document.createElement('option');
     assignedTruckOption.value = truckDetails.truck_code;
@@ -752,51 +814,30 @@ function handlePlateNumberSelect() {
     assignedTruckSelect.selectedIndex = 1;
     assignedTruckSelect.disabled = false;
 
-    // Set truck type
     truckTypeInput.value = truckDetails.truck_type || '';
-
-    // Update item description with plate number and truck type
     document.querySelector('.item-description').value = `${plateNumber} - ${truckDetails.brand} - ${truckDetails.model} (${truckDetails.truck_type || 'N/A'})`;
 
-    // Filter pricing for this truck
     const pricingForTruck = pricingData.filter(p => p.truck_code === truckDetails.truck_code);
 
-    // Populate pricing/zone dropdown - show only zone_from and zone_to without amount
     pricingZoneSelect.innerHTML = '<option value="">-- Select Pricing --</option>';
     pricingZoneSelect.disabled = false;
 
     if (pricingForTruck.length > 0) {
         pricingForTruck.forEach(pricing => {
-            const option = document.createElement('option');
-            option.value = JSON.stringify({
-                zone_from: pricing.zone_from,
-                zone_to: pricing.zone_to,
-                minimum_charge: pricing.minimum_charge,
-                payment_terms: pricing.payment_terms
-            });
-            // Only show zone_from and zone_to without the amount
-            option.textContent = `${pricing.zone_from} - ${pricing.zone_to}`;
-            option.dataset.zoneFrom = pricing.zone_from;
-            option.dataset.zoneTo = pricing.zone_to;
-            option.dataset.minimumCharge = pricing.minimum_charge;
-            option.dataset.paymentTerms = pricing.payment_terms;
-            pricingZoneSelect.appendChild(option);
+            pricingZoneSelect.appendChild(buildPricingOption(pricing));
         });
     } else {
         pricingZoneSelect.innerHTML = '<option value="">-- No pricing found --</option>';
     }
 
-    // Auto-select if only one pricing option exists
     if (pricingZoneSelect.options.length === 2) {
         pricingZoneSelect.selectedIndex = 1;
     }
     
-    // Enable price editing after truck selection
     enablePriceEditing();
     handlePricingSelect();
 }
 
-// Function to handle truck code selection
 function handleTruckCodeSelect() {
     const truckCode = document.getElementById('truckCodeSelect').value;
     const plateNumberSelect = document.getElementById('plateNumberSelect');
@@ -804,7 +845,6 @@ function handleTruckCodeSelect() {
     const pricingZoneSelect = document.getElementById('pricingZoneSelect');
     const truckTypeInput = document.getElementById('truckType');
 
-    // Reset if no truck code
     if (!truckCode) {
         plateNumberSelect.value = '';
         assignedTruckSelect.innerHTML = '<option value="">-- Select Assigned Truck --</option>';
@@ -818,11 +858,9 @@ function handleTruckCodeSelect() {
         return;
     }
 
-    // Get truck details using truck_code
     const truckDetails = findTruckByCode(truckCode);
 
     if (!truckDetails) {
-        console.error('No truck details found for code:', truckCode);
         plateNumberSelect.value = '';
         assignedTruckSelect.innerHTML = '<option value="">-- No truck details --</option>';
         assignedTruckSelect.disabled = true;
@@ -835,10 +873,8 @@ function handleTruckCodeSelect() {
         return;
     }
 
-    // Set plate number
     plateNumberSelect.value = truckDetails.plate_number;
 
-    // Populate and auto-select Assigned Truck
     assignedTruckSelect.innerHTML = '<option value="">-- Select Assigned Truck --</option>';
     const assignedTruckOption = document.createElement('option');
     assignedTruckOption.value = truckDetails.truck_code;
@@ -851,51 +887,30 @@ function handleTruckCodeSelect() {
     assignedTruckSelect.selectedIndex = 1;
     assignedTruckSelect.disabled = false;
 
-    // Set truck type
     truckTypeInput.value = truckDetails.truck_type || '';
-
-    // Update item description with plate number and truck type
     document.querySelector('.item-description').value = `${truckDetails.plate_number} - ${truckDetails.brand} - ${truckDetails.model} (${truckDetails.truck_type || 'N/A'})`;
 
-    // Filter pricing for this truck
     const pricingForTruck = pricingData.filter(p => p.truck_code === truckCode);
 
-    // Populate pricing/zone dropdown - show only zone_from and zone_to without amount
     pricingZoneSelect.innerHTML = '<option value="">-- Select Pricing --</option>';
     pricingZoneSelect.disabled = false;
 
     if (pricingForTruck.length > 0) {
         pricingForTruck.forEach(pricing => {
-            const option = document.createElement('option');
-            option.value = JSON.stringify({
-                zone_from: pricing.zone_from,
-                zone_to: pricing.zone_to,
-                minimum_charge: pricing.minimum_charge,
-                payment_terms: pricing.payment_terms
-            });
-            // Only show zone_from and zone_to without the amount
-            option.textContent = `${pricing.zone_from} - ${pricing.zone_to}`;
-            option.dataset.zoneFrom = pricing.zone_from;
-            option.dataset.zoneTo = pricing.zone_to;
-            option.dataset.minimumCharge = pricing.minimum_charge;
-            option.dataset.paymentTerms = pricing.payment_terms;
-            pricingZoneSelect.appendChild(option);
+            pricingZoneSelect.appendChild(buildPricingOption(pricing));
         });
     } else {
         pricingZoneSelect.innerHTML = '<option value="">-- No pricing found --</option>';
     }
 
-    // Auto-select if only one pricing option exists
     if (pricingZoneSelect.options.length === 2) {
         pricingZoneSelect.selectedIndex = 1;
     }
     
-    // Enable price editing after truck selection
     enablePriceEditing();
     handlePricingSelect();
 }
 
-// Function to handle pricing selection
 function handlePricingSelect() {
     const selectedOption = document.getElementById('pricingZoneSelect').selectedOptions[0];
     
@@ -910,11 +925,22 @@ function handlePricingSelect() {
     document.getElementById('destinationTo').value = selectedOption.dataset.zoneTo || '';
     document.getElementById('paymentTerms').value = selectedOption.dataset.paymentTerms || '';
     
-    // Update unit price in line items
-    const minimumCharge = selectedOption.dataset.minimumCharge || '0';
+    // Prefer rate_per_trip → fallback to minimum_charge → fallback to effective_unit_price → 0
+    const ratePerTrip   = parseFloat(selectedOption.dataset.ratePerTrip);
+    const minimumCharge = parseFloat(selectedOption.dataset.minimumCharge);
+    const effective     = parseFloat(selectedOption.dataset.effectivePrice);
+    
+    let unitPrice = 0;
+    if (!isNaN(ratePerTrip) && ratePerTrip > 0) {
+        unitPrice = ratePerTrip;
+    } else if (!isNaN(minimumCharge) && minimumCharge > 0) {
+        unitPrice = minimumCharge;
+    } else if (!isNaN(effective) && effective > 0) {
+        unitPrice = effective;
+    }
+    
     document.querySelectorAll('.price-input').forEach(input => {
-        input.value = parseFloat(minimumCharge).toFixed(2);
-        // Make price input editable
+        input.value = unitPrice.toFixed(2);
         input.readOnly = false;
         input.disabled = false;
         input.style.backgroundColor = '#ffffff';
@@ -923,7 +949,84 @@ function handlePricingSelect() {
     calculateTotals();
 }
 
-// Function to calculate totals with comma formatting
+// ============================================================
+// SPECIAL CHARGES FUNCTIONS
+// ============================================================
+
+function resetSpecialCharges() {
+    document.getElementById('specialChargesBody').innerHTML = '';
+    document.getElementById('specialChargesTotal').textContent = '₱0.00';
+}
+
+function addSpecialChargeRow(prefillKind = '', prefillAmount = '') {
+    const tbody = document.getElementById('specialChargesBody');
+    const rowCount = tbody.children.length;
+    const newRow = document.createElement('tr');
+    newRow.className = 'special-charge-row';
+    
+    let kindOptions = '<option value="">-- Select Charge Kind --</option>';
+    chargeKinds.forEach(kind => {
+        const selected = (kind === prefillKind) ? 'selected' : '';
+        kindOptions += `<option value="${kind}" ${selected}>${kind}</option>`;
+    });
+    
+    const amountValue = prefillAmount !== '' ? prefillAmount : '0.00';
+    
+    newRow.innerHTML = `
+        <td style="text-align:center;font-weight:600;">${rowCount + 1}</td>
+        <td>
+            <select class="charge-kind-select" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;">
+                ${kindOptions}
+            </select>
+        </td>
+        <td>
+            <input type="number" class="charge-amount-input" value="${amountValue}" step="0.01" min="0" 
+                   style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;">
+        </td>
+        <td style="text-align:center;">
+            <button type="button" class="remove-special-charge-btn" 
+                    style="background:none;border:none;cursor:pointer;padding:6px;border-radius:6px;transition:background 0.15s;">
+                <i data-lucide="trash-2" style="width:16px;height:16px;color:#dc2626;"></i>
+            </button>
+        </td>
+    `;
+    
+    tbody.appendChild(newRow);
+    
+    newRow.querySelector('.charge-amount-input').addEventListener('input', calculateTotals);
+    newRow.querySelector('.charge-kind-select').addEventListener('change', calculateTotals);
+    
+    newRow.querySelector('.remove-special-charge-btn').addEventListener('click', function() {
+        newRow.remove();
+        Array.from(tbody.children).forEach((row, index) => {
+            row.children[0].textContent = index + 1;
+        });
+        calculateTotals();
+        if (tbody.children.length === 0) {
+            document.getElementById('specialChargesCard').style.display = 'none';
+            document.getElementById('specialChargesTotalRow').style.display = 'none';
+        }
+    });
+    
+    lucide.createIcons();
+    calculateTotals();
+}
+
+function updateSpecialProcessBadge(hasSpecialProcess) {
+    const badge = document.getElementById('specialProcessBadge');
+    if (hasSpecialProcess) {
+        badge.className = 'special-process-badge has';
+        badge.innerHTML = '<i data-lucide="alert-circle"></i> Yes — With Special Process';
+    } else {
+        badge.className = 'special-process-badge none';
+        badge.innerHTML = '<i data-lucide="minus-circle"></i> None';
+    }
+    lucide.createIcons();
+}
+
+// ============================================================
+// CALCULATE TOTALS (includes special charges)
+// ============================================================
 function calculateTotals() {
     let subtotal = 0;
     let totalDiscount = 0;
@@ -937,40 +1040,44 @@ function calculateTotals() {
         const discountAmount = amount * (discount / 100);
         const lineTotal = amount - discountAmount;
         
-        // Format with comma separators
         row.querySelector('.amount-display').textContent = formatCurrency(lineTotal);
         
         subtotal += amount;
         totalDiscount += discountAmount;
     });
     
-    const vat = (subtotal - totalDiscount) * 0.12;
-    const totalDue = subtotal - totalDiscount + vat;
+    // Special charges total
+    let specialChargesTotal = 0;
+    document.querySelectorAll('.special-charge-row').forEach(row => {
+        const amount = parseFloat(row.querySelector('.charge-amount-input').value) || 0;
+        specialChargesTotal += amount;
+    });
     
-    // Format all totals with comma separators
+    const vat = (subtotal - totalDiscount) * 0.12;
+    const totalDue = subtotal - totalDiscount + vat + specialChargesTotal;
+    
     document.getElementById('subtotal').textContent = formatCurrency(subtotal);
     document.getElementById('totalDiscount').textContent = '−' + formatCurrency(totalDiscount);
     document.getElementById('vatAmount').textContent = formatCurrency(vat);
+    document.getElementById('specialChargesTotal').textContent = formatCurrency(specialChargesTotal);
     document.getElementById('totalDue').textContent = formatCurrency(totalDue);
 }
 
-// Function to save order
+// ============================================================
+// SAVE ORDER (includes special charges)
+// ============================================================
 async function saveOrder() {
     const saveBtn = document.getElementById('saveBtn');
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<span class="loading-spinner"></span> Saving...';
 
     try {
-        // Collect Data
         const customerSelect = document.getElementById('customerSelect');
         const selectedCustomer = customerSelect.selectedOptions[0];
-        
         const assignedTruckSelect = document.getElementById('assignedTruckSelect');
         const selectedTruck = assignedTruckSelect.selectedOptions[0];
-
         const driverSelect = document.getElementById('driverSelect');
 
-        // Validate driver selection
         if (!driverSelect.value) {
             alert('Please select a driver for this order.');
             saveBtn.disabled = false;
@@ -979,7 +1086,6 @@ async function saveOrder() {
             return;
         }
 
-        // Validate customer selection
         if (!customerSelect.value) {
             alert('Please select a customer for this order.');
             saveBtn.disabled = false;
@@ -988,7 +1094,6 @@ async function saveOrder() {
             return;
         }
 
-        // Validate truck selection
         if (!document.getElementById('plateNumberSelect').value) {
             alert('Please select a truck (plate number) for this order.');
             saveBtn.disabled = false;
@@ -997,17 +1102,38 @@ async function saveOrder() {
             return;
         }
 
-        // Get first row data
+        // Collect special charges
+        const specialCharges = [];
+        let specialChargeError = false;
+        document.querySelectorAll('.special-charge-row').forEach(row => {
+            const chargeKind = row.querySelector('.charge-kind-select').value;
+            const chargeAmount = parseFloat(row.querySelector('.charge-amount-input').value) || 0;
+            if (chargeKind && chargeAmount > 0) {
+                specialCharges.push({
+                    charge_kind: chargeKind,
+                    charge_amount: chargeAmount
+                });
+            } else if (chargeKind && chargeAmount <= 0) {
+                specialChargeError = true;
+            }
+        });
+        
+        if (specialChargeError) {
+            alert('Please enter a valid amount (> 0) for all special charges.');
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i data-lucide="save"></i> Save';
+            lucide.createIcons();
+            return;
+        }
+
         const firstRow = document.querySelector('.line-item-row');
         const unitPrice = parseFloat(firstRow.querySelector('.price-input').value) || 0;
         const qty = parseFloat(firstRow.querySelector('.qty-input').value) || 0;
         const discountPercent = parseFloat(firstRow.querySelector('.discount-input').value) || 0;
         const unit = firstRow.querySelector('.unit-input').value || 'TRIP';
         
-        // Amount (Net of discount)
         const rowAmount = (unitPrice * qty) - ((unitPrice * qty) * (discountPercent / 100));
         
-        // Global Discount Amount from total
         const discountText = document.getElementById('totalDiscount').textContent.replace(/[^\d.-]/g, '');
         const discountAmount = Math.abs(parseFloat(discountText) || 0);
 
@@ -1032,7 +1158,8 @@ async function saveOrder() {
             discount_amount: discountAmount,
             quantity: qty,
             notes: document.getElementById('notes').value || '',
-            driver: driverSelect.value || ''
+            driver: driverSelect.value || '',
+            special_charges: specialCharges
         };
 
         console.log('Sending payload:', payload);
@@ -1046,14 +1173,12 @@ async function saveOrder() {
             body: JSON.stringify(payload)
         });
 
-        // Check if response is OK
         if (!response.ok) {
             const text = await response.text();
             console.error('Server response error:', text);
             throw new Error('Server returned status ' + response.status + ': ' + text.substring(0, 100));
         }
 
-        // Try to parse JSON
         let result;
         try {
             result = await response.json();
@@ -1083,13 +1208,18 @@ async function saveOrder() {
     }
 }
 
-// Event Listeners
+// ============================================================
+// EVENT LISTENERS
+// ============================================================
+
+// Customer selection — checks special process from data attribute
 document.getElementById('customerSelect').addEventListener('change', function() {
     const selectedOption = this.selectedOptions[0];
     const customerCode = this.value;
     const fullName = selectedOption.dataset.fullName || '';
     const contactPerson = selectedOption.dataset.contactPerson || '';
     const fullAddress = selectedOption.dataset.fullAddress || '';
+    const hasSpecialProcess = selectedOption.dataset.specialProcess === '1';
     
     document.getElementById('customerCode').value = customerCode || '';
     document.getElementById('salesRep').value = contactPerson || '';
@@ -1109,35 +1239,49 @@ document.getElementById('customerSelect').addEventListener('change', function() 
     document.getElementById('destinationTo').value = '';
     document.getElementById('paymentTerms').value = 'Select pricing first';
 
-    // Reset driver + view driver button
+    // Reset driver
     document.getElementById('driverSelect').value = '';
     document.getElementById('driverName').value = '';
     viewDriverBtn.disabled = true;
     closeDriverImagePreview();
     
-    // Disable price editing when no customer
+    // Reset special charges
+    resetSpecialCharges();
+    
     disablePriceEditing();
     
-    // Enable dependent fields if customer is selected
     if (customerCode) {
         fetchTruckCodes(customerCode);
         document.getElementById('driverSelect').disabled = false;
         document.querySelectorAll('.item-description, .qty-input, .discount-input, #notes, #saveBtn, #printBtn, #addRowBtn, .remove-row-btn').forEach(el => {
-            if (el.classList) {
-                el.disabled = false;
-            }
+            if (el.classList) el.disabled = false;
         });
+        
+        // Handle special process
+        if (hasSpecialProcess) {
+            updateSpecialProcessBadge(true);
+            document.getElementById('specialChargesCard').style.display = 'block';
+            document.getElementById('specialChargesTotalRow').style.display = 'flex';
+            addSpecialChargeRow(); // auto-add first row
+        } else {
+            updateSpecialProcessBadge(false);
+            document.getElementById('specialChargesCard').style.display = 'none';
+            document.getElementById('specialChargesTotalRow').style.display = 'none';
+        }
     } else {
+        updateSpecialProcessBadge(false);
+        document.getElementById('specialChargesCard').style.display = 'none';
+        document.getElementById('specialChargesTotalRow').style.display = 'none';
         document.getElementById('driverSelect').disabled = true;
         document.querySelectorAll('.item-description, .qty-input, .discount-input, #notes, #saveBtn, #printBtn, #addRowBtn, .remove-row-btn').forEach(el => {
-            if (el.classList) {
-                el.disabled = true;
-            }
+            if (el.classList) el.disabled = true;
         });
     }
+    
+    calculateTotals();
 });
 
-// Driver selection event listener — shows profile picture preview + enables View Driver button
+// Driver selection
 document.getElementById('driverSelect').addEventListener('change', function() {
     const selectedOption = this.selectedOptions[0];
     const driverName = selectedOption ? selectedOption.dataset.fullName : '';
@@ -1147,23 +1291,25 @@ document.getElementById('driverSelect').addEventListener('change', function() {
     document.getElementById('driverName').value = driverName || '';
 
     if (driverCode) {
-        // Enable the View Driver button
         viewDriverBtn.disabled = false;
-        // Show profile picture preview
         openDriverImagePreview(driverCode, driverName, profilePicture);
     } else {
-        // Disable the View Driver button
         viewDriverBtn.disabled = true;
         closeDriverImagePreview();
     }
 });
 
-// Truck selection event listeners
+// Truck selection
 document.getElementById('truckCodeSelect').addEventListener('change', handleTruckCodeSelect);
 document.getElementById('plateNumberSelect').addEventListener('change', handlePlateNumberSelect);
 document.getElementById('pricingZoneSelect').addEventListener('change', handlePricingSelect);
 
-// Add new row functionality
+// Add special charge button
+document.getElementById('addSpecialChargeBtn').addEventListener('click', function() {
+    addSpecialChargeRow();
+});
+
+// Add new line item row
 document.getElementById('addRowBtn').addEventListener('click', function() {
     const tbody = document.getElementById('lineItemsBody');
     const rowCount = tbody.children.length;
@@ -1181,12 +1327,10 @@ document.getElementById('addRowBtn').addEventListener('click', function() {
     `;
     tbody.appendChild(newRow);
     
-    // Add event listeners to new row inputs
     newRow.querySelector('.qty-input').addEventListener('input', calculateTotals);
     newRow.querySelector('.discount-input').addEventListener('input', calculateTotals);
     newRow.querySelector('.price-input').addEventListener('input', calculateTotals);
     
-    // Enable price editing if truck is already selected
     if (document.getElementById('plateNumberSelect').value) {
         newRow.querySelector('.price-input').readOnly = false;
         newRow.querySelector('.price-input').disabled = false;
@@ -1196,7 +1340,6 @@ document.getElementById('addRowBtn').addEventListener('click', function() {
     newRow.querySelector('.remove-row-btn').addEventListener('click', function() {
         if (tbody.children.length > 1) {
             newRow.remove();
-            // Renumber rows
             Array.from(tbody.children).forEach((row, index) => {
                 row.children[0].textContent = index + 1;
             });
@@ -1207,28 +1350,25 @@ document.getElementById('addRowBtn').addEventListener('click', function() {
     lucide.createIcons();
 });
 
-// Add event listeners for quantity, price, and discount changes
 document.addEventListener('input', function(e) {
     if (e.target.classList.contains('qty-input') || 
         e.target.classList.contains('discount-input') || 
-        e.target.classList.contains('price-input')) {
+        e.target.classList.contains('price-input') ||
+        e.target.classList.contains('charge-amount-input')) {
         calculateTotals();
     }
 });
 
-// Sync delivery date with order date (in case order date changes)
 document.getElementById('orderDate').addEventListener('change', function() {
     document.getElementById('deliveryDate').value = this.value;
 });
 
-// Save Button Listener
 document.getElementById('saveBtn').addEventListener('click', saveOrder);
 
 // Initial setup
 lucide.createIcons();
 disablePriceEditing();
 
-// Optional: just prevent navigation for restricted items (visual only)
 document.querySelectorAll('.restricted-item').forEach(el => {
     el.addEventListener('click', e => {
         e.preventDefault();

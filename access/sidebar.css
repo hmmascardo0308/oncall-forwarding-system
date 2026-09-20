@@ -3,8 +3,8 @@
 /* Sidebar base styles */
 .sidebar {
     width: var(--sidebar-width, 260px);
-    background: linear-gradient(90deg, #06223f 0%, #0d325e 100%);
-    /* background: linear-gradient(90deg, #f01313 0%, #a30000 100%); */
+    /* background: linear-gradient(90deg, #06223f 0%, #0d325e 100%); */
+    background: linear-gradient(90deg, #f01313 0%, #a30000 100%);
     color: #e8f0fe;
     height: 100vh;
     position: fixed;

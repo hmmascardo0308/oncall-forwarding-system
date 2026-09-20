@@ -54,8 +54,8 @@ $stmt->close();
 $delivery_payment = $rows[0]['delivery_payment'] ?? 'Pending';
 $delivery_status  = $rows[0]['delivery_status'] ?? 'Pending';
 
-// Totals
-$due_stmt = $conn->prepare("SELECT SUM(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
+// ─── CHANGED: MAX, not SUM — net_amount_due is the same on every item row ───
+$due_stmt = $conn->prepare("SELECT MAX(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
 $due_stmt->bind_param("s", $po_number);
 $due_stmt->execute();
 $due_res = $due_stmt->get_result()->fetch_assoc();
@@ -96,9 +96,17 @@ if (!empty($rows)) {
     foreach ($rows as &$r) {
         $r['delivery_status']  = $delivery_status;
         $r['delivery_payment'] = $delivery_payment;
+        // Keep total_amount_paid consistent on every row for the modal
+        $r['total_amount_paid'] = $total_amount_paid > 0 ? $total_amount_paid : ($r['total_amount_paid'] ?? 0);
     }
     unset($r);
 }
+
+// ─── CHANGED: locked only when Fully Received + Fully Paid AND history covers net due ───
+$is_locked = ($delivery_status === 'Fully Received')
+          && ($delivery_payment === 'Fully Paid')
+          && ($net_due_total > 0 && $paid_total >= $net_due_total);
+// ─── END CHANGED ───
 
 header('Content-Type: application/json');
 
@@ -109,6 +117,12 @@ if ($summary_only) {
             'success' => true,
             'rows' => $rows,
             'total_amount_paid' => $total_amount_paid,
+            // ─── CHANGED ───
+            'paid_from_history' => $paid_total,
+            'net_amount_due'    => $net_due_total,
+            'balance'           => max(0, $net_due_total - $paid_total),
+            'locked'            => $is_locked,
+            // ─── END CHANGED ───
             'delivery_status' => $delivery_status,
             'delivery_payment' => $delivery_payment,
             'delivered_date' => $po['delivered_date'] ?? null,
@@ -127,6 +141,12 @@ if ($summary_only) {
         'success' => true,
         'rows' => $rows,
         'total_amount_paid' => $total_amount_paid,
+        // ─── CHANGED ───
+        'paid_from_history' => $paid_total,
+        'net_amount_due'    => $net_due_total,
+        'balance'           => max(0, $net_due_total - $paid_total),
+        'locked'            => $is_locked,
+        // ─── END CHANGED ───
         'delivery_status' => $delivery_status,
         'delivery_payment' => $delivery_payment,
         'auto_upgraded' => $auto_upgraded

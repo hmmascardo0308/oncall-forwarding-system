@@ -1085,3 +1085,16 @@ tbody td select {
                 justify-content: center;
             }
         }
+
+.remove-row-btn {
+    padding: 5px 15px;
+    background-color: #8bb4ffac;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.remove-row-btn:hover {
+    background-color: #6f9ff5;
+    transform: translateY(-1px);
+}

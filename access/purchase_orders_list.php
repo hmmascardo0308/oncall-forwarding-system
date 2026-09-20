@@ -3,6 +3,7 @@
 session_start();
 require_once __DIR__ . '/../config/config.php';
 require_once __DIR__ . '/../config/access_control.php';
+date_default_timezone_set('Asia/Manila');
 
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
@@ -43,10 +44,67 @@ function getPaymentStatusForDelivery($delivery_status) {
     }
 }
 
+// ─── CHANGED: helper to detect locked POs ─────────────────────────────
+// A PO is "locked" only when it is Fully Received AND Fully Paid AND
+// payment history covers the net amount due. Status flags alone are not enough
+// (so a one-shot full payment can still insert into po_payment_history).
+function isPurchaseOrderLocked($delivery_status, $delivery_payment) {
+    return ($delivery_status === 'Fully Received')
+        && ($delivery_payment === 'Fully Paid');
+}
+
+function isPurchaseOrderLockedByNumber($conn, $po_number) {
+    $stmt = $conn->prepare("
+        SELECT delivery_status, delivery_payment
+        FROM purchase_order
+        WHERE po_number = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param("s", $po_number);
+    $stmt->execute();
+    $res = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if (!$res) return false;
+
+    $ds = $res['delivery_status'] ?? 'Pending';
+    $dp = $res['delivery_payment'] ?? 'Pending';
+
+    // Cancelled / Late Delivery: only lock if both status flags say completed
+    if (in_array($ds, ['Cancelled', 'Late Delivery'], true)) {
+        return isPurchaseOrderLocked($ds, $dp);
+    }
+
+    $due_stmt = $conn->prepare("SELECT MAX(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
+    $due_stmt->bind_param("s", $po_number);
+    $due_stmt->execute();
+    $due_res = $due_stmt->get_result()->fetch_assoc();
+    $due_stmt->close();
+    $net_due = floatval($due_res['due_total'] ?? 0);
+
+    $pay_stmt = $conn->prepare("SELECT SUM(amount_paid) AS paid_total FROM po_payment_history WHERE po_number = ?");
+    $pay_stmt->bind_param("s", $po_number);
+    $pay_stmt->execute();
+    $pay_res = $pay_stmt->get_result()->fetch_assoc();
+    $pay_stmt->close();
+    $paid = floatval($pay_res['paid_total'] ?? 0);
+
+    // TRUE lock: money has been fully recorded in history
+    if ($net_due > 0 && $paid >= $net_due) {
+        return true;
+    }
+
+    // Status says Fully Paid but no (or incomplete) payment history → NOT locked yet
+    // so the formal payment insert can still run
+    return false;
+}
+// ─── END CHANGED ──────────────────────────────────────────────────────
+
 // ─── Total Amount Paid rules ──────────────────────────────────────────
 function resolveTotalAmountPaid($conn, $po_number, $delivery_payment) {
     if ($delivery_payment === 'Fully Paid') {
-        $stmt = $conn->prepare("SELECT SUM(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
+        // ─── CHANGED: MAX, not SUM — net_amount_due is the same on every item row ───
+        $stmt = $conn->prepare("SELECT MAX(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
         $stmt->bind_param("s", $po_number);
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
@@ -69,7 +127,8 @@ function maybeAutoUpgradeStatus($conn, $po_number, $current_delivery_status, $cu
         return [$current_delivery_status, $current_delivery_payment, false];
     }
 
-    $due_stmt = $conn->prepare("SELECT SUM(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
+    // ─── CHANGED: MAX, not SUM — net_amount_due is the same on every item row ───
+    $due_stmt = $conn->prepare("SELECT MAX(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
     $due_stmt->bind_param("s", $po_number);
     $due_stmt->execute();
     $due_res = $due_stmt->get_result()->fetch_assoc();
@@ -103,6 +162,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
         echo json_encode(['success' => false, 'message' => 'Missing PO number']);
         exit;
     }
+
+    // ─── CHANGED: block edits on locked (Fully Paid + Fully Received) POs ───
+    if (isPurchaseOrderLockedByNumber($conn, $po_number)) {
+        echo json_encode([
+            'success' => false,
+            'locked'  => true,
+            'message' => 'This Purchase Order is already Fully Paid and Fully Received and can no longer be edited.'
+        ]);
+        $conn->close();
+        exit;
+    }
+    // ─── END CHANGED ───
 
     // ─── Bulk delivery update ─────────────────────────────────
     if ($field === 'bulk_delivery_update' && !empty($delivery_info)) {
@@ -207,8 +278,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
     }
 
     // ─── Bulk item update ─────────────────────────────────────
-    // Only qty_received + stock are updated here. Payment amounts are the
-    // exclusive responsibility of po_payment_history (see bulk_payment_update).
     if ($field === 'bulk_update' && !empty($items_update)) {
         $items_data = json_decode($items_update, true);
         if (!is_array($items_data)) {
@@ -347,8 +416,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
     }
 
     // ─── Payment history insert ───────────────────────────────
-    // Records ONE row per PO (per payment event). The single shared amount
-    // is written to every item row in purchase_order (NOT divided).
     if ($field === 'bulk_payment_update' && !empty($payment_info)) {
         $payment_data = json_decode($payment_info, true);
         if (!is_array($payment_data)) {
@@ -366,7 +433,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
             $amount_paid    = floatval($payment_data['amount_paid'] ?? 0);
 
             if (empty($payment_method)) {
-                throw new Exception('Payment method is required for Partial payments');
+                throw new Exception('Payment method is required for formal payment recording');
             }
             if ($amount_paid <= 0) {
                 throw new Exception('Amount paid must be greater than zero');
@@ -402,7 +469,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
             $created_by = $username;
             $now = date('Y-m-d H:i:s');
 
-            // Single row per PO payment — item fields NULL.
             $insert_sql = "INSERT INTO po_payment_history
                 (po_number, payment_date, amount_paid, payment_method, reference_no, notes, supporting_attachment, created_by, created_at, item_code, item_name, qty_received)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)";
@@ -425,14 +491,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
             }
             $stmt->close();
 
-            // Store payment meta on the PO.
             $upd = $conn->prepare("UPDATE purchase_order SET payment_method = ?, payment_notes = ?, paid_at = ? WHERE po_number = ?");
             $upd->bind_param("ssss", $payment_method, $notes, $payment_date, $po_number);
             $upd->execute();
             $upd->close();
 
             // ── Check if the PO is now fully paid ──
-            $check_due_stmt = $conn->prepare("SELECT SUM(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
+            // ─── CHANGED: MAX, not SUM — net_amount_due is the same on every item row ───
+            $check_due_stmt = $conn->prepare("SELECT MAX(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
             $check_due_stmt->bind_param("s", $po_number);
             $check_due_stmt->execute();
             $due_row = $check_due_stmt->get_result()->fetch_assoc();
@@ -472,9 +538,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
             }
 
             // ── Write the SAME shared amount to every item row ──
-            // We intentionally do NOT divide by item count. Each item row stores the
-            // full PO-level amount paid, and the list view uses MAX() (not SUM()) so
-            // it isn't double-counted when grouped by PO.
             if ($paid_total > 0) {
                 $sync = $conn->prepare("
                     UPDATE purchase_order
@@ -499,6 +562,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_SERVER['HTTP_X_REQUESTED_WI
                 'attachment' => $attachment_path,
                 'total_paid' => $amount_paid,
                 'total_amount_paid' => $resolved_total,
+                'paid_from_history' => $paid_total,
+                'net_amount_due' => $net_due_total,
+                'balance' => max(0, $net_due_total - $paid_total),
                 'delivery_payment' => $final_payment_status,
                 'auto_upgraded' => $auto_upgraded
             ]);
@@ -574,8 +640,8 @@ if (!empty($where_conditions)) {
     $where_clause = 'WHERE ' . implode(' AND ', $where_conditions);
 }
 
-// NOTE: total_amount_paid uses MAX() — NOT SUM() — because every item row
-// stores the same full PO-level amount (see bulk_payment_update).
+// NOTE: total_amount_paid and net_amount_due use MAX() — NOT SUM() —
+// because every item row stores the same full PO-level value.
 $sql = "SELECT
             po.po_number,
             MAX(po.supplier_code) as supplier_code,
@@ -600,7 +666,8 @@ $sql = "SELECT
             SUM(po.subtotal) as subtotal,
             SUM(po.total_vat) as total_vat,
             MAX(po.total_amount_paid) as total_amount_paid,
-            SUM(po.net_amount_due) as net_amount_due_total,
+            -- ─── CHANGED: MAX, not SUM ───
+            MAX(po.net_amount_due) as net_amount_due_total,
             GROUP_CONCAT(CONCAT(po.item_code, '|', po.item, '|', po.qty_ordered, '|', IFNULL(po.qty_received, 0), '|', po.unit_cost, '|', po.total_amount, '|', IFNULL(po.total_amount_paid, 0), '|', IFNULL(po.net_amount_due, 0), '|', IFNULL(po.unit, '')) SEPARATOR '||') as items_detail
         FROM purchase_order po
         $where_clause
@@ -826,11 +893,43 @@ function getDeliveryPaymentBadgeClass($payment) {
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <!-- <link rel="stylesheet" href="css/purchase_order.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/po_list.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
 
-
+    <!-- ─── CHANGED: styles for payment summary grid ─── -->
+    <style>
+        .payment-summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px 16px;
+            margin: 10px 0 12px;
+            padding: 10px 12px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+        }
+        .payment-summary-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .payment-summary-label {
+            font-size: 11px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-weight: 500;
+        }
+        .payment-summary-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        .payment-summary-value.balance {
+            color: #b45309;
+        }
+    </style>
+    <!-- ─── END CHANGED ─── -->
 </head>
 <body>
 
@@ -887,6 +986,34 @@ function getDeliveryPaymentBadgeClass($payment) {
         </div>
     </div>
 </div>
+
+<!-- ─── CHANGED: Locked PO Prompt Modal ─── -->
+<div id="lockedPOModal" class="modal-overlay-edit">
+    <div class="cancelled-po-modal">
+        <div class="cancelled-po-icon" style="color:#16a34a;">
+            <i data-lucide="lock" style="width:48px;height:48px;"></i>
+        </div>
+        <h3 class="cancelled-po-title">This PO is Fully Paid &amp; Fully Received</h3>
+        <p class="cancelled-po-message">
+            Purchase Order <strong id="lockedPONumber">—</strong> has been completed
+            and can no longer be edited or transacted on.
+        </p>
+        <p class="cancelled-po-hint">
+            If you need to make changes, please contact an administrator to reopen the PO.
+        </p>
+        <div class="cancelled-po-actions">
+            <button type="button" class="btn-secondary" onclick="closeLockedPOModal()">
+                <i data-lucide="x" style="width:14px;height:14px;"></i>
+                Close
+            </button>
+            <a href="#" id="lockedPOViewBtn" class="btn-primary">
+                <i data-lucide="eye" style="width:14px;height:14px;"></i>
+                View PO
+            </a>
+        </div>
+    </div>
+</div>
+<!-- ─── END CHANGED ─── -->
 
 <?php include 'sidebar.php'; ?>
 
@@ -1028,9 +1155,23 @@ function getDeliveryPaymentBadgeClass($payment) {
                         </thead>
                         <tbody>
                             <?php foreach ($purchase_orders as $po): ?>
-                                <tr data-po-number="<?php echo htmlspecialchars($po['po_number']); ?>" ondblclick="editPurchaseOrder('<?php echo htmlspecialchars($po['po_number']); ?>')">
+                                <?php
+                                // ─── CHANGED: locked only when status is complete AND money is fully recorded ───
+                                $row_net_due = floatval($po['net_amount_due_total'] ?? 0);
+                                $row_paid    = floatval($po['total_amount_paid'] ?? 0);
+                                $row_is_locked = ($po['delivery_status'] === 'Fully Received')
+                                              && ($po['delivery_payment'] === 'Fully Paid')
+                                              && ($row_net_due > 0 && $row_paid >= $row_net_due);
+                                ?>
+                                <tr data-po-number="<?php echo htmlspecialchars($po['po_number']); ?>"
+                                    data-locked="<?php echo $row_is_locked ? '1' : '0'; ?>"
+                                    ondblclick="editPurchaseOrder('<?php echo htmlspecialchars($po['po_number']); ?>')"
+                                    style="<?php echo $row_is_locked ? 'opacity:0.85;' : ''; ?>">
                                     <td style="font-weight: 600; color: var(--accent-orange);">
                                         <?php echo htmlspecialchars($po['po_number']); ?>
+                                        <?php if ($row_is_locked): ?>
+                                            <i data-lucide="lock" style="width:12px;height:12px;color:#16a34a;vertical-align:middle;margin-left:4px;" title="Fully Paid &amp; Fully Received — locked"></i>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <?php echo htmlspecialchars($po['supplier_name']); ?>
@@ -1148,6 +1289,9 @@ function getDeliveryPaymentBadgeClass($payment) {
             if (modal?.style.display === 'flex') closeModal();
             if (document.getElementById('editPOModal')?.classList.contains('show')) closeEditModal();
             if (document.getElementById('cancelledPOModal')?.classList.contains('show')) closeCancelledPOModal();
+            // ─── CHANGED ───
+            if (document.getElementById('lockedPOModal')?.classList.contains('show')) closeLockedPOModal();
+            // ─── END CHANGED ───
         }
     });
 
@@ -1251,15 +1395,45 @@ function getDeliveryPaymentBadgeClass($payment) {
         if (modal) modal.classList.remove('show');
     }
 
+    // ─── CHANGED: Locked PO prompt modal helpers ───────────────────
+    function showLockedPOModal(poNumber) {
+        const modal = document.getElementById('lockedPOModal');
+        const poLabel = document.getElementById('lockedPONumber');
+        const viewBtn = document.getElementById('lockedPOViewBtn');
+
+        if (!modal) return;
+
+        poLabel.textContent = poNumber;
+        viewBtn.href = 'purchase_orders_view.php?po_number=' + encodeURIComponent(poNumber);
+
+        modal.classList.add('show');
+        lucide.createIcons();
+    }
+
+    function closeLockedPOModal() {
+        const modal = document.getElementById('lockedPOModal');
+        if (modal) modal.classList.remove('show');
+    }
+    // ─── END CHANGED ───
+
     function editPurchaseOrder(poNumber) {
         const row = document.querySelector(`tr[data-po-number="${poNumber}"]`);
-        const statusCell = row ? row.cells[5] : null; // Status column
+        const statusCell = row ? row.cells[5] : null;
         const currentStatus = statusCell ? statusCell.textContent.trim() : '';
 
+        // ─── CHANGED: cancelled check ───
         if (currentStatus === 'Cancelled') {
             showCancelledPOModal(poNumber);
             return;
         }
+
+        // ─── CHANGED: locked check (Fully Paid + Fully Received) ───
+        const isLocked = row && row.getAttribute('data-locked') === '1';
+        if (isLocked) {
+            showLockedPOModal(poNumber);
+            return;
+        }
+        // ─── END CHANGED ───
 
         currentEditingPO = poNumber;
         changedItems = {};
@@ -1287,7 +1461,8 @@ function getDeliveryPaymentBadgeClass($payment) {
                     delivered_date: po.delivered_date || '',
                     received_by: po.received_by || ''
                 };
-                isPartialMode = (po.delivery_payment === 'Partially Paid');
+                // Formal payment fields for both Partially Paid and Fully Paid
+                isPartialMode = (po.delivery_payment === 'Partially Paid' || po.delivery_payment === 'Fully Paid');
                 renderEditForm(data.rows);
                 lucide.createIcons();
                 updateUnsavedBadge();
@@ -1306,32 +1481,50 @@ function getDeliveryPaymentBadgeClass($payment) {
         const isCancelled = po.delivery_status === 'Cancelled';
         const isLate = po.delivery_status === 'Late Delivery';
 
-        isPartialMode = (po.delivery_payment === 'Partially Paid');
+        // Show formal payment fields for both Partially Paid AND Fully Paid
+        // (one-time full payment uses the same formal process as partial)
+        isPartialMode = (po.delivery_payment === 'Partially Paid' || po.delivery_payment === 'Fully Paid');
 
-        // Compute the default shared amount paid:
-        // - If partially paid, the per-item total_amount_paid already holds the SAME
-        //   full PO-level amount on every row (see backend), so we take MAX() — NOT SUM().
-        // - Otherwise, compute from qty (net_due if fully received, else qty * unit_cost).
-        let defaultSharedAmount = 0;
-        if (isPartialMode) {
-            const maxExistingPaid = items.reduce(
-                (acc, it) => Math.max(acc, parseFloat(it.total_amount_paid) || 0),
-                0
-            );
-            defaultSharedAmount = maxExistingPaid;
-        } else {
-            items.forEach(item => {
-                const qtyOrdered = parseFloat(item.qty_ordered) || 0;
-                const qtyReceived = parseFloat(item.qty_received) || 0;
-                const unitCost = parseFloat(item.unit_cost) || 0;
-                const netAmountDue = parseFloat(item.net_amount_due) || parseFloat(item.total_amount) || 0;
-                if (qtyReceived >= qtyOrdered) defaultSharedAmount += netAmountDue;
-                else defaultSharedAmount += qtyReceived * unitCost;
-            });
+        // ─── CHANGED ──────────────────────────────────────────────
+        // alreadyPaidFromHistory = cumulative SUM(amount_paid) from po_payment_history.
+        // Every item row stores the SAME PO-level value, so MAX() across items.
+        // Always load history total so both partial and one-shot full payments see it.
+        let alreadyPaidFromHistory = items.reduce(
+            (acc, it) => Math.max(acc, parseFloat(it.total_amount_paid) || 0),
+            0
+        );
+
+        // ─── CHANGED: group Net Amount Due by net_amount_due (MAX, not SUM) ───
+        const netDueTotal = items.reduce(
+            (acc, it) => Math.max(acc, parseFloat(it.net_amount_due) || parseFloat(it.total_amount) || 0),
+            0
+        );
+        // ─── END CHANGED ───
+
+        const balanceBefore = Math.max(0, netDueTotal - alreadyPaidFromHistory);
+
+        // The Amount Paid input represents ONLY the NEW payment for this save.
+        // For a one-shot Fully Paid (no prior history), default to full net due / remaining balance.
+        // For Partially Paid, start at 0 so user enters the new installment.
+        let defaultNewPayment = 0;
+        if (po.delivery_payment === 'Fully Paid' || po.delivery_payment === 'Pending' || !po.delivery_payment) {
+            if (balanceBefore > 0) {
+                defaultNewPayment = balanceBefore;
+            } else {
+                items.forEach(item => {
+                    const qtyOrdered  = parseFloat(item.qty_ordered) || 0;
+                    const qtyReceived = parseFloat(item.qty_received) || 0;
+                    const unitCost    = parseFloat(item.unit_cost) || 0;
+                    const netAmountDue = parseFloat(item.net_amount_due) || parseFloat(item.total_amount) || 0;
+                    if (qtyReceived >= qtyOrdered) defaultNewPayment += netAmountDue;
+                    else defaultNewPayment += qtyReceived * unitCost;
+                });
+            }
         }
-        sharedAmountPaid = defaultSharedAmount;
+        // When already Partially Paid, leave defaultNewPayment = 0 (user enters new installment)
+        sharedAmountPaid = defaultNewPayment;
+        // ─── END CHANGED ──────────────────────────────────────────
 
-        // Items table — NO Net Amount Due, NO per-item Amount Paid
         const itemsHtml = items.map((item, index) => {
             const qtyOrdered = parseFloat(item.qty_ordered) || 0;
             const qtyReceived = parseFloat(item.qty_received) || 0;
@@ -1432,11 +1625,11 @@ function getDeliveryPaymentBadgeClass($payment) {
 
                 <div class="payment-fields-row ${isPartialMode ? 'show' : ''}" id="partialPaymentFields">
                     <div style="font-weight:600;margin-bottom:8px;color:#0369a1;">
-                        <i data-lucide="credit-card" style="width:14px;height:14px;"></i> Partial Payment Details
+                        <i data-lucide="credit-card" style="width:14px;height:14px;"></i> Payment Details
                     </div>
                     <div class="payment-fields-grid">
                         <div class="form-group" style="margin:0;">
-                            <label>Payment Method</label>
+                            <label>Payment Method <span style="color:#ef4444;">*</span></label>
                             <select id="shared_payment_method">
                                 <option value="">— Select —</option>
                                 <option value="Cash">Cash</option>
@@ -1466,9 +1659,10 @@ function getDeliveryPaymentBadgeClass($payment) {
                         <input type="text" id="payment_notes" placeholder="Optional notes for this payment">
                     </div>
                     <p class="partial-hint">
-                        💡 When Payment Status is <strong>Partially Paid</strong>, the single
-                        <strong>Amount Paid</strong> field below is saved as one
-                        <code>po_payment_history</code> row for the whole PO.
+                        💡 Whether this is a <strong>one-time full payment</strong> (Fully Paid) or a
+                        <strong>partial installment</strong>, the single <strong>Amount Paid</strong>
+                        field below is saved as one <code>PO Payment History</code> row for the whole PO.
+                        Payment Method is required for formal recording.
                     </p>
                 </div>
             </div>
@@ -1494,25 +1688,59 @@ function getDeliveryPaymentBadgeClass($payment) {
                     </tbody>
                 </table>
 
+                <!-- ─── CHANGED: shared amount + payment summary ─── -->
                 <div class="shared-amount-paid-box">
                     <label for="shared_amount_paid">
                         <i data-lucide="credit-card" style="width:14px;height:14px;"></i>
-                        Amount Paid <small>(applied to the whole PO)</small>
+                        New Payment Amount <small>(applied to the whole PO)</small>
                     </label>
+
+                    <div class="payment-summary-grid">
+                        <div class="payment-summary-item">
+                            <span class="payment-summary-label">Already Paid (History)</span>
+                            <span class="payment-summary-value" id="alreadyPaidDisplay"
+                                  data-value="${alreadyPaidFromHistory}">
+                                ₱${alreadyPaidFromHistory.toFixed(2)}
+                            </span>
+                        </div>
+                        <div class="payment-summary-item">
+                            <span class="payment-summary-label">Net Amount Due</span>
+                            <span class="payment-summary-value" id="netDueDisplay"
+                                  data-value="${netDueTotal}">
+                                ₱${netDueTotal.toFixed(2)}
+                            </span>
+                        </div>
+                        <div class="payment-summary-item">
+                            <span class="payment-summary-label">Balance</span>
+                            <span class="payment-summary-value balance" id="balanceDisplay">
+                                ₱${balanceBefore.toFixed(2)}
+                            </span>
+                        </div>
+                        <div class="payment-summary-item">
+                            <span class="payment-summary-label">New Total After Save</span>
+                            <span class="payment-summary-value" id="newTotalDisplay">
+                                ₱${(alreadyPaidFromHistory + defaultNewPayment).toFixed(2)}
+                            </span>
+                        </div>
+                    </div>
+
                     <div class="shared-amount-paid-input-wrap">
                         <span>₱</span>
                         <input type="number"
                                id="shared_amount_paid"
-                               value="${defaultSharedAmount.toFixed(2)}"
+                               value="${defaultNewPayment.toFixed(2)}"
                                min="0"
                                step="0.01"
-                               onchange="markSharedAmountPaidChanged(this.value)">
+                               oninput="onNewPaymentInput(this.value)"
+                               onchange="onNewPaymentInput(this.value)">
                     </div>
                     <p class="partial-hint" style="margin-top:8px;">
-                        💡 This single amount is saved as one <code>po_payment_history</code> row for this PO
-                        (not per item).
+                        💡 This single amount is saved as one <code>PO Payment History</code> row for this PO.
+                        The value above is <strong>only the new payment for this save</strong> — it is
+                        added on top of the <strong>Already Paid</strong> total.
                     </p>
                 </div>
+                <!-- ─── END CHANGED ─── -->
 
                 <div style="margin-top: 12px; font-size: 12px; color: #64748b; background: #f8fafc; padding: 8px 12px; border-radius: 6px;">
                     <i data-lucide="info" style="width: 12px; height: 12px;"></i>
@@ -1589,7 +1817,8 @@ function getDeliveryPaymentBadgeClass($payment) {
             Array.from(paymentSelect.options).forEach(opt => { opt.hidden = false; });
         }
 
-        isPartialMode = (newPaymentValue === 'Partially Paid');
+        // Show formal payment fields for both Partially Paid and Fully Paid
+        isPartialMode = (newPaymentValue === 'Partially Paid' || newPaymentValue === 'Fully Paid');
         const partialFields = document.getElementById('partialPaymentFields');
         if (partialFields) {
             if (isPartialMode) partialFields.classList.add('show');
@@ -1696,7 +1925,8 @@ function getDeliveryPaymentBadgeClass($payment) {
         if (!['Fully Paid', 'Partially Paid'].includes(value)) return;
 
         markDeliveryFieldChanged('delivery_payment', value);
-        isPartialMode = (value === 'Partially Paid');
+        // Show formal payment fields for both Partially Paid and Fully Paid
+        isPartialMode = (value === 'Partially Paid' || value === 'Fully Paid');
 
         const partialFields = document.getElementById('partialPaymentFields');
         if (partialFields) {
@@ -1741,38 +1971,77 @@ function getDeliveryPaymentBadgeClass($payment) {
         }
     }
 
-    function markSharedAmountPaidChanged(value) {
-        sharedAmountPaid = parseFloat(value) || 0;
+    // ─── CHANGED: new payment input handler with live balance & cap ───
+    function onNewPaymentInput(value) {
+        const alreadyPaidEl = document.getElementById('alreadyPaidDisplay');
+        const netDueEl      = document.getElementById('netDueDisplay');
+        const alreadyPaid = parseFloat(alreadyPaidEl?.getAttribute('data-value')) || 0;
+        const netDue      = parseFloat(netDueEl?.getAttribute('data-value')) || 0;
 
-        document.querySelectorAll('tr[data-item-code]').forEach(r => r.classList.add('payment-changed'));
+        let newPayment = parseFloat(value) || 0;
+        const remaining = Math.max(0, netDue - alreadyPaid);
 
+        // Cap new payment at the remaining balance (can't overpay)
+        if (remaining > 0 && newPayment > remaining) {
+            newPayment = remaining;
+            const input = document.getElementById('shared_amount_paid');
+            if (input) input.value = remaining.toFixed(2);
+        }
+
+        const newTotal   = alreadyPaid + newPayment;
+        const newBalance = Math.max(0, netDue - newTotal);
+
+        const balEl = document.getElementById('balanceDisplay');
+        if (balEl) balEl.textContent = `₱${newBalance.toFixed(2)}`;
+
+        const newTotalEl = document.getElementById('newTotalDisplay');
+        if (newTotalEl) newTotalEl.textContent = `₱${newTotal.toFixed(2)}`;
+
+        sharedAmountPaid = newPayment;
         hasUnsavedChanges = true;
         updateUnsavedBadge();
+    }
+    // ─── END CHANGED ───
+
+    function markSharedAmountPaidChanged(value) {
+        onNewPaymentInput(value);
     }
 
     // Recalculate the shared amount from all item qty + delivery/payment status
     function recalcSharedAmountFromItems() {
         const paymentStatus = document.getElementById('delivery_payment')?.value;
 
-        // If user is in partial-payment mode, leave the input alone (it's user-editable)
-        if (paymentStatus === 'Partially Paid') {
-            return;
+        // In partial mode, leave the user's input alone (they enter each installment).
+        if (paymentStatus === 'Partially Paid') return;
+
+        // Prefer remaining balance from summary (Already Paid vs Net Due)
+        const alreadyPaidEl = document.getElementById('alreadyPaidDisplay');
+        const netDueEl      = document.getElementById('netDueDisplay');
+        const alreadyPaid = parseFloat(alreadyPaidEl?.getAttribute('data-value')) || 0;
+        const netDue      = parseFloat(netDueEl?.getAttribute('data-value')) || 0;
+        let remaining = Math.max(0, netDue - alreadyPaid);
+
+        // Fallback: estimate from qty received if no net-due data yet
+        if (remaining <= 0 && netDue <= 0) {
+            let total = 0;
+            document.querySelectorAll('.qty-received-input').forEach(inp => {
+                const qtyReceived  = parseFloat(inp.value) || 0;
+                const qtyOrdered   = parseFloat(inp.getAttribute('data-original-qty-ordered')) || 0;
+                const unitCost     = parseFloat(inp.getAttribute('data-unit-cost')) || 0;
+                const netAmountDue = parseFloat(inp.getAttribute('data-net-amount-due')) || 0;
+
+                if (qtyReceived >= qtyOrdered && qtyOrdered > 0) total += netAmountDue;
+                else total += qtyReceived * unitCost;
+            });
+            remaining = total;
         }
 
-        let total = 0;
-        document.querySelectorAll('.qty-received-input').forEach(inp => {
-            const qtyReceived = parseFloat(inp.value) || 0;
-            const qtyOrdered = parseFloat(inp.getAttribute('data-original-qty-ordered')) || 0;
-            const unitCost = parseFloat(inp.getAttribute('data-unit-cost')) || 0;
-            const netAmountDue = parseFloat(inp.getAttribute('data-net-amount-due')) || 0;
-
-            if (qtyReceived >= qtyOrdered && qtyOrdered > 0) total += netAmountDue;
-            else total += qtyReceived * unitCost;
-        });
-
-        sharedAmountPaid = total;
+        sharedAmountPaid = remaining;
         const sharedInput = document.getElementById('shared_amount_paid');
-        if (sharedInput) sharedInput.value = total.toFixed(2);
+        if (sharedInput) sharedInput.value = remaining.toFixed(2);
+
+        // ─── CHANGED: refresh the summary grid as well ───
+        onNewPaymentInput(remaining);
     }
 
     function markDeliveryFieldChanged(field, value) {
@@ -1808,9 +2077,13 @@ function getDeliveryPaymentBadgeClass($payment) {
         const hasItemChanges = Object.keys(changedItems).length > 0;
         const hasDeliveryChanges = Object.keys(changedDeliveryFields).length > 0;
         const hasFile = document.getElementById('supporting_attachment')?.files?.length > 0;
-        const isCurrentlyPartial = document.getElementById('delivery_payment')?.value === 'Partially Paid';
+        const currentPaymentStatus = document.getElementById('delivery_payment')?.value || '';
+        // Formal payment path for BOTH Partially Paid and Fully Paid (one-time full payment)
+        const needsFormalPayment = (currentPaymentStatus === 'Partially Paid' || currentPaymentStatus === 'Fully Paid');
+        const sharedAmountPreview = parseFloat(document.getElementById('shared_amount_paid')?.value) || 0;
+        const hasPaymentAmount = sharedAmountPreview > 0;
 
-        if (!hasItemChanges && !hasDeliveryChanges && !hasFile) {
+        if (!hasItemChanges && !hasDeliveryChanges && !hasFile && !hasPaymentAmount) {
             statusEl.textContent = 'No changes to save';
             statusEl.className = 'save-status show error';
             setTimeout(() => { statusEl.className = 'save-status'; }, 3000);
@@ -1825,53 +2098,13 @@ function getDeliveryPaymentBadgeClass($payment) {
         statusEl.className = 'save-status show saving';
 
         const poNumber = currentEditingPO;
-        let promises = [];
 
-        if (hasDeliveryChanges) {
-            const deliveryData = {};
-            Object.keys(changedDeliveryFields).forEach(field => {
-                deliveryData[field] = changedDeliveryFields[field];
-            });
+        // Build request runners — payment FIRST so history + total_amount_paid exist
+        // before delivery status is written (avoids lock race on one-shot full pay).
+        const runners = [];
 
-            const formData = new FormData();
-            formData.append('po_number', poNumber);
-            formData.append('field', 'bulk_delivery_update');
-            formData.append('delivery_info', JSON.stringify(deliveryData));
-
-            promises.push(
-                fetch(window.location.href, {
-                    method: 'POST',
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                    body: formData
-                }).then(r => r.json())
-            );
-        }
-
-        if (hasItemChanges) {
-            const itemsData = Object.values(changedItems).map(it => {
-                const qtyInput = document.getElementById(`qty_received_${it.item_code}`);
-                return {
-                    item_code: it.item_code,
-                    qty_received: qtyInput ? parseFloat(qtyInput.value) || 0 : (it.qty_received || 0)
-                };
-            });
-
-            const formData = new FormData();
-            formData.append('po_number', poNumber);
-            formData.append('field', 'bulk_update');
-            formData.append('items_update', JSON.stringify(itemsData));
-
-            promises.push(
-                fetch(window.location.href, {
-                    method: 'POST',
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                    body: formData
-                }).then(r => r.json())
-            );
-        }
-
-        // Partial payment — send ONE shared amount for the whole PO
-        if (isCurrentlyPartial && (hasItemChanges || hasFile || hasDeliveryChanges)) {
+        // 1) Formal payment (partial OR one-time full)
+        if (needsFormalPayment && (hasItemChanges || hasFile || hasDeliveryChanges || hasPaymentAmount)) {
             const sharedMethod = document.getElementById('shared_payment_method')?.value || '';
             const sharedRef    = document.getElementById('shared_reference_no')?.value || '';
             const payDate      = document.getElementById('payment_date')?.value || new Date().toISOString().split('T')[0];
@@ -1880,7 +2113,7 @@ function getDeliveryPaymentBadgeClass($payment) {
 
             if (sharedAmount > 0 || hasFile) {
                 if (!sharedMethod) {
-                    statusEl.textContent = '❌ Payment Method is required for Partial payments';
+                    statusEl.textContent = '❌ Payment Method is required for formal payment recording';
                     statusEl.className = 'save-status show error';
                     saveBtn.disabled = false;
                     saveBtn.innerHTML = '<i data-lucide="save" style="width:16px;height:16px;"></i> Save Changes';
@@ -1896,35 +2129,79 @@ function getDeliveryPaymentBadgeClass($payment) {
                     return;
                 }
 
-                const payPayload = {
-                    payment_method: sharedMethod,
-                    reference_no: sharedRef,
-                    notes: notes,
-                    payment_date: payDate,
-                    amount_paid: sharedAmount
-                };
-
-                const formData = new FormData();
-                formData.append('po_number', poNumber);
-                formData.append('field', 'bulk_payment_update');
-                formData.append('payment_info', JSON.stringify(payPayload));
-
-                const fileInput = document.getElementById('supporting_attachment');
-                if (fileInput && fileInput.files[0]) {
-                    formData.append('supporting_attachment', fileInput.files[0]);
-                }
-
-                promises.push(
-                    fetch(window.location.href, {
+                runners.push(() => {
+                    const payPayload = {
+                        payment_method: sharedMethod,
+                        reference_no: sharedRef,
+                        notes: notes,
+                        payment_date: payDate,
+                        amount_paid: sharedAmount
+                    };
+                    const formData = new FormData();
+                    formData.append('po_number', poNumber);
+                    formData.append('field', 'bulk_payment_update');
+                    formData.append('payment_info', JSON.stringify(payPayload));
+                    const fileInput = document.getElementById('supporting_attachment');
+                    if (fileInput && fileInput.files[0]) {
+                        formData.append('supporting_attachment', fileInput.files[0]);
+                    }
+                    return fetch(window.location.href, {
                         method: 'POST',
                         headers: { 'X-Requested-With': 'XMLHttpRequest' },
                         body: formData
-                    }).then(r => r.json())
-                );
+                    }).then(r => r.json());
+                });
             }
         }
 
-        Promise.all(promises)
+        // 2) Item qty updates
+        if (hasItemChanges) {
+            runners.push(() => {
+                const itemsData = Object.values(changedItems).map(it => {
+                    const qtyInput = document.getElementById(`qty_received_${it.item_code}`);
+                    return {
+                        item_code: it.item_code,
+                        qty_received: qtyInput ? parseFloat(qtyInput.value) || 0 : (it.qty_received || 0)
+                    };
+                });
+                const formData = new FormData();
+                formData.append('po_number', poNumber);
+                formData.append('field', 'bulk_update');
+                formData.append('items_update', JSON.stringify(itemsData));
+                return fetch(window.location.href, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    body: formData
+                }).then(r => r.json());
+            });
+        }
+
+        // 3) Delivery status / dates last
+        if (hasDeliveryChanges) {
+            runners.push(() => {
+                const deliveryData = {};
+                Object.keys(changedDeliveryFields).forEach(field => {
+                    deliveryData[field] = changedDeliveryFields[field];
+                });
+                const formData = new FormData();
+                formData.append('po_number', poNumber);
+                formData.append('field', 'bulk_delivery_update');
+                formData.append('delivery_info', JSON.stringify(deliveryData));
+                return fetch(window.location.href, {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    body: formData
+                }).then(r => r.json());
+            });
+        }
+
+        // Run sequentially: payment → items → delivery
+        let chain = Promise.resolve([]);
+        runners.forEach(run => {
+            chain = chain.then(results => run().then(r => { results.push(r); return results; }));
+        });
+
+        chain
             .then(results => {
                 saveBtn.disabled = false;
                 saveBtn.innerHTML = '<i data-lucide="save" style="width:16px;height:16px;"></i> Save Changes';
@@ -1932,12 +2209,26 @@ function getDeliveryPaymentBadgeClass($payment) {
 
                 let allSuccess = true;
                 let messages = [];
+                let lockedMessage = null;
+                // ─── CHANGED: detect locked response ───
                 results.forEach(data => {
                     if (!data.success) {
                         allSuccess = false;
+                        if (data.locked) {
+                            lockedMessage = data.message || 'This PO is already Fully Paid and Fully Received.';
+                        }
                         messages.push(data.message || 'Unknown error');
                     }
                 });
+
+                if (lockedMessage) {
+                    // Close the edit modal and show the locked modal
+                    closeEditModal(true); // force close
+                    showLockedPOModal(poNumber);
+                    if (poNumber) refreshTableRow(poNumber);
+                    return;
+                }
+                // ─── END CHANGED ───
 
                 if (allSuccess) {
                     statusEl.textContent = '✅ All changes saved successfully!';
@@ -1946,6 +2237,27 @@ function getDeliveryPaymentBadgeClass($payment) {
                     const autoUpgraded = results.some(r => r && r.auto_upgraded === true);
                     if (autoUpgraded) {
                         showNotification('🎉 Payment complete — status auto-updated to Fully Received / Fully Paid', 'success');
+
+                        // ─── CHANGED: PO is now locked — close edit modal after a short delay ───
+                        if (poNumber) refreshTableRow(poNumber);
+                        setTimeout(() => {
+                            closeEditModal(true); // force close without confirm
+                        }, 1500);
+                        // ─── END CHANGED ───
+                    } else {
+                        // ─── CHANGED: refresh summary in-place ───
+                        const alreadyPaidEl = document.getElementById('alreadyPaidDisplay');
+                        const netDueEl      = document.getElementById('netDueDisplay');
+                        if (alreadyPaidEl && netDueEl) {
+                            const prevPaid = parseFloat(alreadyPaidEl.getAttribute('data-value')) || 0;
+                            const netDue   = parseFloat(netDueEl.getAttribute('data-value')) || 0;
+                            const newPaid  = prevPaid + (sharedAmountPaid || 0);
+                            alreadyPaidEl.setAttribute('data-value', newPaid);
+                            alreadyPaidEl.textContent = `₱${newPaid.toFixed(2)}`;
+                            const balEl = document.getElementById('balanceDisplay');
+                            if (balEl) balEl.textContent = `₱${Math.max(0, netDue - newPaid).toFixed(2)}`;
+                        }
+                        // ─── END CHANGED ───
                     }
 
                     results.forEach(data => {
@@ -2039,6 +2351,17 @@ function getDeliveryPaymentBadgeClass($payment) {
                         if (totalCell && data.total_amount_paid !== undefined) {
                             totalCell.textContent = `₱${parseFloat(data.total_amount_paid).toFixed(2)}`;
                         }
+
+                        // ─── CHANGED: keep data-locked in sync (prefer server locked flag) ───
+                        const isLocked = (data.locked === true)
+                            || ((po.delivery_status === 'Fully Received')
+                                && (po.delivery_payment === 'Fully Paid')
+                                && (parseFloat(data.total_amount_paid || 0) > 0
+                                    && parseFloat(data.net_amount_due || 0) > 0
+                                    && parseFloat(data.total_amount_paid) >= parseFloat(data.net_amount_due)));
+                        row.setAttribute('data-locked', isLocked ? '1' : '0');
+                        row.style.opacity = isLocked ? '0.85' : '';
+                        // ─── END CHANGED ───
                     }
                 }
             })
@@ -2065,8 +2388,9 @@ function getDeliveryPaymentBadgeClass($payment) {
         }
     }
 
-    function closeEditModal() {
-        if (hasUnsavedChanges || Object.keys(changedItems).length > 0 || Object.keys(changedDeliveryFields).length > 0) {
+    // ─── CHANGED: allow forcing close (e.g. when PO becomes locked) ───
+    function closeEditModal(force = false) {
+        if (!force && (hasUnsavedChanges || Object.keys(changedItems).length > 0 || Object.keys(changedDeliveryFields).length > 0)) {
             if (!confirm('You have unsaved changes. Are you sure you want to close without saving?')) return;
         }
         document.getElementById('editPOModal').classList.remove('show');
@@ -2118,6 +2442,12 @@ function getDeliveryPaymentBadgeClass($payment) {
     document.getElementById('cancelledPOModal')?.addEventListener('click', function(e) {
         if (e.target === this) closeCancelledPOModal();
     });
+
+    // ─── CHANGED: locked modal backdrop click ───
+    document.getElementById('lockedPOModal')?.addEventListener('click', function(e) {
+        if (e.target === this) closeLockedPOModal();
+    });
+    // ─── END CHANGED ───
 </script>
 </body>
 </html>

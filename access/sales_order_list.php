@@ -70,6 +70,29 @@ if (!$so) {
     exit;
 }
 
+// ── Fetch special charges for this SO ────────────────────────────────────────
+$special_charges       = [];
+$special_charges_total = 0.0;
+
+$safe_so    = $conn->real_escape_string($so_no);
+$charge_res = $conn->query("
+    SELECT charge_kind, charge_amount
+    FROM `oncall_forwarding`.`sales_order_special_charge`
+    WHERE sales_order_no = '{$safe_so}'
+    ORDER BY id ASC
+");
+
+if ($charge_res) {
+    while ($row = $charge_res->fetch_assoc()) {
+        $amount = floatval($row['charge_amount']);
+        $special_charges[] = [
+            'kind'   => $row['charge_kind'],
+            'amount' => $amount,
+        ];
+        $special_charges_total += $amount;
+    }
+}
+
 // ── Fetch customers ───────────────────────────────────────────────────────────
 $customers = [];
 $cr = $conn->query("SELECT full_name, customer_code, contact_person, full_address FROM `oncall_forwarding`.`customer_masterlist` ORDER BY full_name ASC");
@@ -264,6 +287,60 @@ $driver_profile_pic   = $so['driver_profile_picture'] ?? '';
             width: 14px;
             height: 14px;
         }
+
+        /* Special charges table (read-only) */
+        .special-charges-title {
+            font-size: 15px;
+            font-weight: 800;
+            color: black;
+            margin-top: 20px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .special-charges-title i {
+            width: 16px;
+            height: 16px;
+        }
+        .special-charge-amount {
+            text-align: right;
+            font-weight: 700;
+            color: #b45309;
+            white-space: nowrap;
+        }
+        .special-charge-row td {
+            background: #fffbeb;
+        }
+        .special-charges-total-row td {
+            background: #fef3c7;
+            font-weight: 800;
+            color: #92400e;
+            border-top: 2px solid #fcd34d;
+        }
+
+        /* Special charges banner */
+        .special-charges-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 8px;
+            color: #92400e;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 16px;
+        }
+        .special-charges-banner i {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+        .special-charges-banner strong {
+            font-weight: 800;
+        }
     </style>
 </head>
 <body>
@@ -345,6 +422,14 @@ $driver_profile_pic   = $so['driver_profile_picture'] ?? '';
         <div class="readonly-banner">
             <i data-lucide="lock" style="width:16px;height:16px;"></i>
             This Sales Order has been submitted for approval and is read-only.
+        </div>
+        <?php endif; ?>
+
+        <?php if ($special_charges_total > 0): ?>
+        <div class="special-charges-banner">
+            <i data-lucide="receipt"></i>
+            This Sales Order includes <strong><?= count($special_charges) ?></strong> special charge(s) totaling
+            <strong><?= '₱' . number_format($special_charges_total, 2) ?></strong>.
         </div>
         <?php endif; ?>
 
@@ -441,6 +526,45 @@ $driver_profile_pic   = $so['driver_profile_picture'] ?? '';
                     </tbody>
                  </table>
             </div>
+
+            <?php if (!empty($special_charges)): ?>
+            <div class="special-charges-title">
+                <i data-lucide="receipt"></i> Special Charges
+            </div>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:50px;">#</th>
+                            <th>Charge Description</th>
+                            <th style="text-align:right;width:150px;">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($special_charges as $idx => $charge): ?>
+                        <tr class="special-charge-row">
+                            <td style="color:var(--text-muted);font-weight:600;"><?= $idx + 1 ?></td>
+                            <td>
+                                <input type="text"
+                                       value="<?= htmlspecialchars($charge['kind']) ?>"
+                                       readonly
+                                       style="width:100%;background:#fffbeb;font-weight:500;color:#92400e;border:1px solid #fcd34d;">
+                            </td>
+                            <td class="special-charge-amount">
+                                <?= '₱' . number_format($charge['amount'], 2) ?>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        <tr class="special-charges-total-row">
+                            <td colspan="2" style="text-align:right;">Total Special Charges</td>
+                            <td class="special-charge-amount" style="color:#92400e;">
+                                <?= '₱' . number_format($special_charges_total, 2) ?>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
         </div>
 
         <!-- Totals + Notes -->
@@ -453,6 +577,12 @@ $driver_profile_pic   = $so['driver_profile_picture'] ?? '';
                 <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">Subtotal</span><span id="subtotal">₱0.00</span></div>
                 <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">Discount</span><span id="discount">−₱0.00</span></div>
                 <div class="totals-row"><span style="font-size: 15px; font-weight: 800; color: black;">VAT (<?= htmlspecialchars($so['vat_percent'] ?? 12) ?>%)</span><span id="vat">₱0.00</span></div>
+                <?php if ($special_charges_total > 0): ?>
+                <div class="totals-row">
+                    <span style="font-size: 15px; font-weight: 800; color: #b45309;">Special Charges</span>
+                    <span id="special-charges" style="color:#b45309;font-weight:700;">₱0.00</span>
+                </div>
+                <?php endif; ?>
                 <div class="totals-row total-final"><span>Total Due</span><span id="grand-total">₱0.00</span></div>
             </div>
         </div>
@@ -575,7 +705,8 @@ const PREFILL = {
     item_description: <?= json_encode($item_desc) ?>,
     driver_code:      <?= json_encode($so['driver'] ?? '') ?>,
     driver_name:      <?= json_encode($so['driver_full_name'] ?? 'Not Assigned') ?>,
-    container_number: <?= json_encode($so['container_number'] ?? '') ?>
+    container_number: <?= json_encode($so['container_number'] ?? '') ?>,
+    special_charges_total: <?= json_encode($special_charges_total) ?>
 };
 
 // ── Formatting ────────────────────────────────────────────────────────────────
@@ -592,11 +723,19 @@ function calcRow() {
     return { sub, discAmt };
 }
 function calcTotals() {
-    const r = calcRow(), net = r.sub - r.discAmt, vat = net * (PREFILL.vat_percent / 100);
-    document.getElementById('subtotal').textContent    = formatPHP(r.sub);
-    document.getElementById('discount').textContent    = '−' + formatPHP(r.discAmt);
-    document.getElementById('vat').textContent         = formatPHP(vat);
-    document.getElementById('grand-total').textContent = formatPHP(net + vat);
+    const r = calcRow();
+    const net = r.sub - r.discAmt;
+    const vat = net * (PREFILL.vat_percent / 100);
+    const special = parseFloat(PREFILL.special_charges_total) || 0;
+
+    document.getElementById('subtotal').textContent = formatPHP(r.sub);
+    document.getElementById('discount').textContent = '−' + formatPHP(r.discAmt);
+    document.getElementById('vat').textContent      = formatPHP(vat);
+
+    const scEl = document.getElementById('special-charges');
+    if (scEl) scEl.textContent = formatPHP(special);
+
+    document.getElementById('grand-total').textContent = formatPHP(net + vat + special);
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────

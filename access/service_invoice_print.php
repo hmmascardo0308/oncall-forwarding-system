@@ -48,16 +48,18 @@ while ($row = $result->fetch_assoc()) {
 $invoice = $invoices[0];
 
 // Calculate totals across all items
-$subtotal = 0;
-$discount_amount = 0;
-$vat_amount = 0;
-$total_due = 0;
+$subtotal          = 0;
+$discount_amount   = 0;
+$vat_amount        = 0;
+$special_charges   = 0;
+$total_due         = 0;
 
 foreach ($invoices as $inv) {
-    $subtotal += floatval($inv['amount']);
+    $subtotal        += floatval($inv['amount']);
     $discount_amount += floatval($inv['discount_amount']);
-    $vat_amount += floatval($inv['vat_amount']);
-    $total_due += floatval($inv['total_amount']);
+    $vat_amount      += floatval($inv['vat_amount']);
+    $special_charges += floatval($inv['charge_amount'] ?? 0);
+    $total_due       += floatval($inv['total_amount']);
 }
 
 $net_of_discount = $subtotal - $discount_amount;
@@ -246,6 +248,15 @@ $so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
             height: 22px;
         }
 
+        /* Special charges — subtle amber tint, still printable in B/W */
+        .special-charge-row td {
+            color: #92400e;
+        }
+        .special-charge-total td {
+            color: #92400e;
+            border-top: 2px solid #000;
+        }
+
         /* Print Media Overrides */
         @media print {
             @page {
@@ -364,16 +375,43 @@ $so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
                         </thead>
                         <tbody>
                             <?php 
-                            $row_count = count($invoices);
+                            // ── Build a combined list of rows: SOs first, then a synthetic
+                            //    "Special Charges" row (if any) ──
+                            $print_rows = [];
+
+                            // Regular SO rows
+                            foreach ($invoices as $inv) {
+                                $print_rows[] = [
+                                    'type'        => 'so',
+                                    'label'       => 'SO: ' . ($inv['sales_order_no'] ?? '—'),
+                                    'qty'         => $inv['quantity'] ?? 1,
+                                    'unit_price'  => $inv['unit_price'] ?? 0,
+                                    'amount'      => ($inv['quantity'] ?? 1) * ($inv['unit_price'] ?? 0),
+                                ];
+                            }
+
+                            // Special charges summary row
+                            if ($special_charges > 0) {
+                                $print_rows[] = [
+                                    'type'        => 'special',
+                                    'label'       => 'Special Charges',
+                                    'qty'         => '',
+                                    'unit_price'  => '',
+                                    'amount'      => $special_charges,
+                                ];
+                            }
+
+                            $row_count = count($print_rows);
                             for ($i = 0; $i < 4; $i++): 
                                 if ($i < $row_count):
-                                    $inv = $invoices[$i];
+                                    $r = $print_rows[$i];
+                                    $isSpecial = ($r['type'] === 'special');
                             ?>
-                            <tr>
-                                <td><strong>SO: <?= htmlspecialchars($inv['sales_order_no'] ?? '—') ?></strong></td>
-                                <td><?= htmlspecialchars($inv['quantity'] ?? 1) ?></td>
-                                <td><?= number_format($inv['unit_price'] ?? 0, 2) ?></td>
-                                <td><?= number_format(($inv['quantity'] ?? 1) * ($inv['unit_price'] ?? 0), 2) ?></td>
+                            <tr class="<?= $isSpecial ? 'special-charge-row' : '' ?>">
+                                <td><strong><?= htmlspecialchars($r['label']) ?></strong></td>
+                                <td><?= $isSpecial ? '' : htmlspecialchars($r['qty']) ?></td>
+                                <td><?= $isSpecial ? '' : number_format($r['unit_price'], 2) ?></td>
+                                <td><?= number_format($r['amount'], 2) ?></td>
                             </tr>
                             <?php else: ?>
                             <tr class="empty-row">
@@ -448,6 +486,12 @@ $so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
                     <tr><td>LESS: <?= number_format($invoice['vat_percent'] ?? 12, 0) ?>% VAT</td><td class="val-cell"><?= number_format($vat_amount, 2) ?></td></tr>
                     <tr><td>AMOUNT: NET OF VAT</td><td class="val-cell"><?= number_format($subtotal - $vat_amount, 2) ?></td></tr>
                     <tr><td>LESS: SC/PWD DISCOUNT</td><td class="val-cell"><?= number_format($discount_amount, 2) ?></td></tr>
+                    <?php if ($special_charges > 0): ?>
+                    <tr>
+                        <td style="color:#92400e;">ADD: SPECIAL CHARGES</td>
+                        <td class="val-cell" style="color:#92400e;"><?= number_format($special_charges, 2) ?></td>
+                    </tr>
+                    <?php endif; ?>
                     <tr><td>TOTAL DUE</td><td class="val-cell"><?= number_format($total_due, 2) ?></td></tr>
                     <tr><td>LESS: WITHHOLDING TAX</td><td class="val-cell"><?= number_format($invoice['withholding_tax'] ?? 0, 2) ?></td></tr>
                     <tr><td>TOTAL AMOUNT DUE</td><td class="val-cell"><?= number_format($total_due - ($invoice['withholding_tax'] ?? 0), 2) ?></td></tr>

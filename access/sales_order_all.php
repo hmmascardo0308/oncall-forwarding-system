@@ -40,23 +40,16 @@ $allowed_pages = [
     'customer_pricer' => ['home.php', 'customer_pricing.php', 'company_profile.php']
 ];
 
-// Function to check if user has access to a specific page
 function hasAccess($page, $user_roles, $allowed_pages) {
-    if (in_array('admin', $user_roles)) {
-        return true;
-    }
+    if (in_array('admin', $user_roles)) return true;
     foreach ($user_roles as $role) {
-        if (isset($allowed_pages[$role]) && in_array($page, $allowed_pages[$role])) {
-            return true;
-        }
+        if (isset($allowed_pages[$role]) && in_array($page, $allowed_pages[$role])) return true;
     }
     return false;
 }
 
-// Role display name
 function getRoleDisplayName($roles) {
     if (in_array('admin', $roles)) return 'Admin';
-    
     $names = [];
     foreach ($roles as $r) {
         switch ($r) {
@@ -85,13 +78,11 @@ $customer_filter = isset($_GET['customer']) ? trim($_GET['customer']) : '';
 $truck_filter = isset($_GET['truck']) ? trim($_GET['truck']) : '';
 $status_filter = isset($_GET['status']) ? trim($_GET['status']) : '';
 
-// Check if any filters are applied (excluding page)
 $has_other_filters = !empty($search_filter) || !empty($customer_filter) || !empty($truck_filter) || !empty($status_filter);
 
-// Set default date range to current month if no date filters and no other filters are applied
 if (empty($date_from) && empty($date_to) && !$has_other_filters) {
-    $date_from = date('Y-m-01'); // First day of current month
-    $date_to = date('Y-m-d');    // Today
+    $date_from = date('Y-m-01');
+    $date_to = date('Y-m-d');
 }
 
 // Build the WHERE clause
@@ -99,20 +90,13 @@ $where_clauses = [];
 $params = [];
 $types = "";
 
-// Search filter (text search)
 if (!empty($search_filter)) {
     $search_term = "%{$search_filter}%";
     $where_clauses[] = "(sales_order_no LIKE ? OR customer_name LIKE ? OR truck_code LIKE ? OR plate_number LIKE ? OR brand LIKE ? OR model LIKE ?)";
-    $params[] = $search_term;
-    $params[] = $search_term;
-    $params[] = $search_term;
-    $params[] = $search_term;
-    $params[] = $search_term;
-    $params[] = $search_term;
+    for ($i = 0; $i < 6; $i++) $params[] = $search_term;
     $types .= "ssssss";
 }
 
-// Date range filter
 if (!empty($date_from)) {
     $where_clauses[] = "DATE(created_date) >= ?";
     $params[] = $date_from;
@@ -125,21 +109,18 @@ if (!empty($date_to)) {
     $types .= "s";
 }
 
-// Customer filter
 if (!empty($customer_filter)) {
     $where_clauses[] = "customer_code = ?";
     $params[] = $customer_filter;
     $types .= "s";
 }
 
-// Truck filter
 if (!empty($truck_filter)) {
     $where_clauses[] = "truck_code = ?";
     $params[] = $truck_filter;
     $types .= "s";
 }
 
-// Status filter
 if (!empty($status_filter)) {
     $where_clauses[] = "status = ?";
     $params[] = $status_filter;
@@ -151,9 +132,7 @@ $where_sql = !empty($where_clauses) ? "WHERE " . implode(" AND ", $where_clauses
 // Get total count for pagination
 $count_query = "SELECT COUNT(*) as total FROM sales_order $where_sql";
 $stmt = $conn->prepare($count_query);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
+if (!empty($params)) $stmt->bind_param($types, ...$params);
 $stmt->execute();
 $count_result = $stmt->get_result();
 $total_records = $count_result->fetch_assoc()['total'];
@@ -162,33 +141,11 @@ $total_pages = ceil($total_records / $limit);
 // Fetch sales orders with pagination
 $salesOrders = [];
 $query = "SELECT 
-    id,
-    sales_order_no,
-    customer_code,
-    customer_name,
-    truck_code,
-    plate_number,
-    brand,
-    model,
-    unit,
-    destination_from,
-    destination_to,
-    order_date,
-    delivery_date,
-    delivery_address,
-    payment_terms,
-    vat_percent,
-    unit_price,
-    discount_percent,
-    amount,
-    discount_amount,
-    quantity,
-    notes,
-    status,
-    created_by,
-    created_date,
-    updated_by,
-    updated_at
+    id, sales_order_no, customer_code, customer_name, truck_code, plate_number,
+    brand, model, unit, destination_from, destination_to, order_date, delivery_date,
+    delivery_address, payment_terms, vat_percent, unit_price, discount_percent,
+    amount, discount_amount, quantity, notes, status, created_by, created_date,
+    updated_by, updated_at
 FROM sales_order 
 $where_sql
 ORDER BY created_date DESC
@@ -212,10 +169,17 @@ if ($result && $result->num_rows > 0) {
 $invoice_statuses = [];
 $payment_statuses = [];
 
+// ============================================================
+// FETCH SPECIAL CHARGES FOR ALL DISPLAYED SALES ORDERS
+// ============================================================
+$special_charges_map = []; // keyed by sales_order_no
+
 if (!empty($salesOrders)) {
     $so_numbers = array_column($salesOrders, 'sales_order_no');
     if (!empty($so_numbers)) {
         $placeholders = implode(',', array_fill(0, count($so_numbers), '?'));
+
+        // --- Invoice / payment statuses ---
         $invoice_query = "SELECT sales_order_no, invoice_no, status, payment_status 
                           FROM service_invoice 
                           WHERE sales_order_no IN ($placeholders)";
@@ -224,7 +188,6 @@ if (!empty($salesOrders)) {
             $stmt->bind_param(str_repeat('s', count($so_numbers)), ...$so_numbers);
             $stmt->execute();
             $invoice_result = $stmt->get_result();
-            
             while ($row = $invoice_result->fetch_assoc()) {
                 $invoice_statuses[$row['sales_order_no']] = [
                     'invoice_no' => $row['invoice_no'],
@@ -236,6 +199,32 @@ if (!empty($salesOrders)) {
                 ];
             }
         }
+
+        // --- Special charges ---
+        // Adjust table name if needed (sales_order_special_charge vs sales_order_special_charges)
+        $charge_query = "SELECT sales_order_no, charge_kind, charge_amount 
+                         FROM sales_order_special_charge 
+                         WHERE sales_order_no IN ($placeholders)";
+        $stmt = $conn->prepare($charge_query);
+        if ($stmt) {
+            $stmt->bind_param(str_repeat('s', count($so_numbers)), ...$so_numbers);
+            $stmt->execute();
+            $charge_result = $stmt->get_result();
+            while ($row = $charge_result->fetch_assoc()) {
+                $so_no = $row['sales_order_no'];
+                if (!isset($special_charges_map[$so_no])) {
+                    $special_charges_map[$so_no] = [
+                        'total' => 0,
+                        'items' => []
+                    ];
+                }
+                $special_charges_map[$so_no]['total'] += floatval($row['charge_amount']);
+                $special_charges_map[$so_no]['items'][] = [
+                    'kind'   => $row['charge_kind'],
+                    'amount' => floatval($row['charge_amount'])
+                ];
+            }
+        }
     }
 }
 
@@ -244,9 +233,7 @@ $customers = [];
 $customer_query = "SELECT DISTINCT customer_code, customer_name FROM sales_order ORDER BY customer_name";
 $customer_result = $conn->query($customer_query);
 if ($customer_result && $customer_result->num_rows > 0) {
-    while ($row = $customer_result->fetch_assoc()) {
-        $customers[] = $row;
-    }
+    while ($row = $customer_result->fetch_assoc()) $customers[] = $row;
 }
 
 // Fetch trucks for dropdown
@@ -254,89 +241,53 @@ $trucks = [];
 $truck_query = "SELECT DISTINCT truck_code, brand, model FROM sales_order ORDER BY truck_code";
 $truck_result = $conn->query($truck_query);
 if ($truck_result && $truck_result->num_rows > 0) {
-    while ($row = $truck_result->fetch_assoc()) {
-        $trucks[] = $row;
-    }
+    while ($row = $truck_result->fetch_assoc()) $trucks[] = $row;
 }
 
-// Get status badge class
 function getStatusBadgeClass($status) {
     $status = strtolower($status);
     switch ($status) {
-        case 'draft':
-            return 'status-draft';
-        case 'pending':
-            return 'status-pending';
-        case 'approved':
-            return 'status-approved';
-        case 'completed':
-            return 'status-completed';
-        case 'cancelled':
-            return 'status-cancelled';
-        default:
-            return 'status-default';
+        case 'draft': return 'status-draft';
+        case 'pending': return 'status-pending';
+        case 'approved': return 'status-approved';
+        case 'completed': return 'status-completed';
+        case 'cancelled': return 'status-cancelled';
+        default: return 'status-default';
     }
 }
 
-// Get invoice status badge class
 function getInvoiceStatusBadgeClass($status) {
     $status = strtolower($status);
     switch ($status) {
-        case 'draft':
-            return 'status-draft';
-        case 'pending':
-            return 'status-pending';
-        case 'approved':
-            return 'status-approved';
-        case 'completed':
-            return 'status-completed';
-        case 'cancelled':
-            return 'status-cancelled';
-        case 'paid':
-            return 'status-paid';
-        default:
-            return 'status-default';
+        case 'draft': return 'status-draft';
+        case 'pending': return 'status-pending';
+        case 'approved': return 'status-approved';
+        case 'completed': return 'status-completed';
+        case 'cancelled': return 'status-cancelled';
+        case 'paid': return 'status-paid';
+        default: return 'status-default';
     }
 }
 
-// Get payment status badge class
 function getPaymentStatusBadgeClass($status) {
     $status = strtolower($status);
-    // If status is empty or null, default to 'Unpaid'
-    if (empty($status)) {
-        $status = 'unpaid';
-    }
+    if (empty($status)) $status = 'unpaid';
     switch ($status) {
-        case 'paid':
-            return 'status-paid';
-        case 'unpaid':
-            return 'status-unpaid';
-        case 'partial':
-            return 'status-partial';
-        case 'overdue':
-            return 'status-overdue';
-        case 'cancelled':
-            return 'status-cancelled';
-        case 'void':
-            return 'status-void';
-        default:
-            return 'status-default';
+        case 'paid': return 'status-paid';
+        case 'unpaid': return 'status-unpaid';
+        case 'partial': return 'status-partial';
+        case 'overdue': return 'status-overdue';
+        case 'cancelled': return 'status-cancelled';
+        case 'void': return 'status-void';
+        default: return 'status-default';
     }
 }
 
-// Format currency
 function formatCurrency($amount) {
     if ($amount === null || $amount === '') return '₱0.00';
     return '₱' . number_format(floatval($amount), 2);
 }
 
-// Get month name for display
-$display_month = '';
-if (!empty($date_from) && !empty($date_to)) {
-    $display_month = date('F Y', strtotime($date_from));
-}
-
-// Check if using default month view
 $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) && 
                           empty($_GET['search']) && empty($_GET['customer']) && 
                           empty($_GET['truck']) && empty($_GET['status']);
@@ -352,11 +303,9 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="css/sales_order.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    
 </head>
 <body>
 
-<!-- Access Denied Modal -->
 <div id="accessModal" class="modal-overlay">
     <div class="access-modal">
         <i data-lucide="shield-off"></i>
@@ -366,7 +315,6 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
     </div>
 </div>
 
-<!-- Include Sidebar -->
 <?php include 'sidebar.php'; ?>
 
 <main class="main-content">
@@ -408,26 +356,21 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
         <div class="month-navigator">
             <span class="label"><i data-lucide="calendar" style="width:16px;height:16px;display:inline;vertical-align:middle;"></i> Month View:</span>
             <?php
-            // Get current month from date filters or use current month
             $current_month = !empty($date_from) ? date('Y-m', strtotime($date_from)) : date('Y-m');
             $prev_month = date('Y-m', strtotime($current_month . '-01 -1 month'));
             $next_month = date('Y-m', strtotime($current_month . '-01 +1 month'));
             $current_month_display = date('F Y', strtotime($current_month . '-01'));
-            
-            // Build query params for navigation
             $nav_params = '';
             if (!empty($search_filter)) $nav_params .= '&search=' . urlencode($search_filter);
             if (!empty($customer_filter)) $nav_params .= '&customer=' . urlencode($customer_filter);
             if (!empty($truck_filter)) $nav_params .= '&truck=' . urlencode($truck_filter);
             if (!empty($status_filter)) $nav_params .= '&status=' . urlencode($status_filter);
             ?>
-            <a href="?date_from=<?= date('Y-m-01', strtotime($prev_month)) ?>&date_to=<?= date('Y-m-t', strtotime($prev_month)) ?><?= $nav_params ?>" 
-               class="month-nav-btn">
+            <a href="?date_from=<?= date('Y-m-01', strtotime($prev_month)) ?>&date_to=<?= date('Y-m-t', strtotime($prev_month)) ?><?= $nav_params ?>" class="month-nav-btn">
                 <i data-lucide="chevron-left" style="width:14px;height:14px;"></i> <?= date('M', strtotime($prev_month)) ?>
             </a>
             <span class="month-display"><?= $current_month_display ?></span>
-            <a href="?date_from=<?= date('Y-m-01', strtotime($next_month)) ?>&date_to=<?= date('Y-m-t', strtotime($next_month)) ?><?= $nav_params ?>" 
-               class="month-nav-btn">
+            <a href="?date_from=<?= date('Y-m-01', strtotime($next_month)) ?>&date_to=<?= date('Y-m-t', strtotime($next_month)) ?><?= $nav_params ?>" class="month-nav-btn">
                 <?= date('M', strtotime($next_month)) ?> <i data-lucide="chevron-right" style="width:14px;height:14px;"></i>
             </a>
             <?php if (!$is_default_month_view): ?>
@@ -439,57 +382,40 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
 
         <!-- Filter Section -->
         <form method="GET" action="" class="filter-section" id="filterForm">
-            <!-- Text Search -->
             <div class="filter-group">
                 <label for="searchFilter">Search</label>
-                <input type="text" name="search" id="searchFilter" 
-                       placeholder="SO #, Customer, Truck..." 
-                       value="<?= htmlspecialchars($search_filter) ?>">
+                <input type="text" name="search" id="searchFilter" placeholder="SO #, Customer, Truck..." value="<?= htmlspecialchars($search_filter) ?>">
             </div>
-
-            <!-- Date From -->
             <div class="filter-group">
                 <label for="dateFrom">Date From</label>
-                <input type="date" name="date_from" id="dateFrom" 
-                       value="<?= htmlspecialchars($date_from) ?>">
+                <input type="date" name="date_from" id="dateFrom" value="<?= htmlspecialchars($date_from) ?>">
             </div>
-
-            <!-- Date To -->
             <div class="filter-group">
                 <label for="dateTo">Date To</label>
-                <input type="date" name="date_to" id="dateTo" 
-                       value="<?= htmlspecialchars($date_to) ?>">
+                <input type="date" name="date_to" id="dateTo" value="<?= htmlspecialchars($date_to) ?>">
             </div>
-
-            <!-- Customer Filter -->
             <div class="filter-group">
                 <label for="customerFilter">Customer</label>
                 <select name="customer" id="customerFilter">
                     <option value="">All Customers</option>
                     <?php foreach ($customers as $customer): ?>
-                    <option value="<?= htmlspecialchars($customer['customer_code']) ?>" 
-                        <?= $customer_filter == $customer['customer_code'] ? 'selected' : '' ?>>
+                    <option value="<?= htmlspecialchars($customer['customer_code']) ?>" <?= $customer_filter == $customer['customer_code'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($customer['customer_name']) ?> (<?= htmlspecialchars($customer['customer_code']) ?>)
                     </option>
                     <?php endforeach; ?>
                 </select>
             </div>
-
-            <!-- Truck Filter -->
             <div class="filter-group">
                 <label for="truckFilter">Truck</label>
                 <select name="truck" id="truckFilter">
                     <option value="">All Trucks</option>
                     <?php foreach ($trucks as $truck): ?>
-                    <option value="<?= htmlspecialchars($truck['truck_code']) ?>" 
-                        <?= $truck_filter == $truck['truck_code'] ? 'selected' : '' ?>>
+                    <option value="<?= htmlspecialchars($truck['truck_code']) ?>" <?= $truck_filter == $truck['truck_code'] ? 'selected' : '' ?>>
                         <?= htmlspecialchars($truck['truck_code']) ?> - <?= htmlspecialchars($truck['brand']) ?> <?= htmlspecialchars($truck['model']) ?>
                     </option>
                     <?php endforeach; ?>
                 </select>
             </div>
-
-            <!-- Status Filter -->
             <div class="filter-group">
                 <label for="statusFilter">Status</label>
                 <select name="status" id="statusFilter">
@@ -501,8 +427,6 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                     <option value="Cancelled" <?= $status_filter == 'Cancelled' ? 'selected' : '' ?>>Cancelled</option>
                 </select>
             </div>
-
-            <!-- Buttons -->
             <div class="filter-buttons">
                 <button type="submit" class="btn-filter btn-filter-primary">
                     <i data-lucide="search" style="width:16px;height:16px;"></i> Search
@@ -513,13 +437,10 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
             </div>
         </form>
 
-        <!-- Filter Stats -->
         <?php if (!empty($search_filter) || !empty($date_from) || !empty($date_to) || !empty($customer_filter) || !empty($truck_filter) || !empty($status_filter)): ?>
         <div class="filter-stats">
             Showing <strong><?= count($salesOrders) ?></strong> results 
-            <?php if (!empty($search_filter)): ?>
-            for search "<strong><?= htmlspecialchars($search_filter) ?></strong>"
-            <?php endif; ?>
+            <?php if (!empty($search_filter)): ?>for search "<strong><?= htmlspecialchars($search_filter) ?></strong>"<?php endif; ?>
             <?php if (!empty($date_from) && !empty($date_to)): ?>
             from <strong><?= date('M d, Y', strtotime($date_from)) ?></strong> to <strong><?= date('M d, Y', strtotime($date_to)) ?></strong>
             <?php elseif (!empty($date_from)): ?>
@@ -527,26 +448,17 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
             <?php elseif (!empty($date_to)): ?>
             up to <strong><?= date('M d, Y', strtotime($date_to)) ?></strong>
             <?php endif; ?>
-            <?php if (!empty($customer_filter)): ?>
-            for customer <strong><?= htmlspecialchars($customer_filter) ?></strong>
-            <?php endif; ?>
-            <?php if (!empty($truck_filter)): ?>
-            for truck <strong><?= htmlspecialchars($truck_filter) ?></strong>
-            <?php endif; ?>
-            <?php if (!empty($status_filter)): ?>
-            with status <strong><?= htmlspecialchars($status_filter) ?></strong>
-            <?php endif; ?>
+            <?php if (!empty($customer_filter)): ?>for customer <strong><?= htmlspecialchars($customer_filter) ?></strong><?php endif; ?>
+            <?php if (!empty($truck_filter)): ?>for truck <strong><?= htmlspecialchars($truck_filter) ?></strong><?php endif; ?>
+            <?php if (!empty($status_filter)): ?>with status <strong><?= htmlspecialchars($status_filter) ?></strong><?php endif; ?>
         </div>
         <?php endif; ?>
 
-        <!-- Default Month Banner -->
         <?php if ($is_default_month_view): ?>
         <div class="default-month-banner">
             <i data-lucide="calendar" style="width:16px;height:16px;"></i>
             Showing orders for <strong><?= date('F Y') ?></strong> (default view)
-            <span style="font-size:12px;color:#64748b;margin-left:8px;">
-                — Use the month navigator above or date filters to change
-            </span>
+            <span style="font-size:12px;color:#64748b;margin-left:8px;">— Use the month navigator above or date filters to change</span>
         </div>
         <?php endif; ?>
 
@@ -572,6 +484,29 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                 </thead>
                 <tbody>
                     <?php foreach ($salesOrders as $order): ?>
+                    <?php
+                        $so_no = $order['sales_order_no'];
+
+                        // ---- Base amounts ----
+                        $net_amount      = floatval($order['amount']);          // already discounted
+                        $discount_amount = floatval($order['discount_amount'] ?? 0);
+                        $vat_percent     = floatval($order['vat_percent'] ?? 0);
+                        $gross_subtotal  = $net_amount + $discount_amount;
+
+                        // ---- Special charges ----
+                        $special_total = isset($special_charges_map[$so_no])
+                                         ? floatval($special_charges_map[$so_no]['total'])
+                                         : 0;
+                        $special_items = isset($special_charges_map[$so_no])
+                                         ? $special_charges_map[$so_no]['items']
+                                         : [];
+
+                        // ---- VAT ----
+                        $vat_amount = $net_amount * ($vat_percent / 100);
+
+                        // ---- Final total ----
+                        $total_due = $net_amount + $vat_amount + $special_total;
+                    ?>
                     <tr>
                         <td>
                             <div class="so-number"><?= htmlspecialchars($order['sales_order_no']) ?></div>
@@ -594,25 +529,34 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                         <td><?= date('M d, Y', strtotime($order['order_date'])) ?></td>
                         <td><?= date('M d, Y', strtotime($order['delivery_date'])) ?></td>
                         <td class="text-right" style="font-weight:600;">
-    <?php 
-    // Calculate total amount due (amount + VAT)
-    $total_due = floatval($order['amount']) + (floatval($order['amount']) * floatval($order['vat_percent'] ?? 0) / 100);
-    echo formatCurrency($total_due);
-    ?>
-    <?php if ($order['discount_amount'] > 0): ?>
-    <div style="font-size:11px;color:#64748b;font-weight:400;">
-        Subtotal: <?= formatCurrency($order['amount']) ?>
-    </div>
-    <div style="font-size:11px;color:#64748b;font-weight:400;">
-        Disc: <?= formatCurrency($order['discount_amount']) ?>
-    </div>
-    <?php endif; ?>
-    <?php if ($order['vat_percent']): ?>
-    <div style="font-size:10px;color:#94a3b8;">
-        VAT (<?= htmlspecialchars($order['vat_percent']) ?>%): <?= formatCurrency(floatval($order['amount']) * floatval($order['vat_percent']) / 100) ?>
-    </div>
-    <?php endif; ?>
-</td>
+                            <?= formatCurrency($total_due) ?>
+
+                            <?php if ($discount_amount > 0): ?>
+                            <div style="font-size:11px;color:#64748b;font-weight:400;">
+                                Subtotal: <?= formatCurrency($gross_subtotal) ?>
+                            </div>
+                            <div style="font-size:11px;color:#64748b;font-weight:400;">
+                                Disc: <?= formatCurrency($discount_amount) ?>
+                            </div>
+                            <?php endif; ?>
+
+                            <?php if ($vat_percent > 0): ?>
+                            <div style="font-size:10px;color:#94a3b8;">
+                                VAT (<?= htmlspecialchars($order['vat_percent']) ?>%): <?= formatCurrency($vat_amount) ?>
+                            </div>
+                            <?php endif; ?>
+
+                            <?php if ($special_total > 0): ?>
+                            <div style="font-size:10px;color:#b45309;font-weight:600;margin-top:3px;border-top:1px dashed #fcd34d;padding-top:3px;">
+                                Special Charges: <?= formatCurrency($special_total) ?>
+                            </div>
+                            <?php foreach ($special_items as $item): ?>
+                            <div style="font-size:10px;color:#b45309;font-weight:400;padding-left:8px;">
+                                • <?= htmlspecialchars($item['kind']) ?>: <?= formatCurrency($item['amount']) ?>
+                            </div>
+                            <?php endforeach; ?>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <span class="status-badge <?= getStatusBadgeClass($order['status'] ?? '') ?>">
                                 <?= htmlspecialchars($order['status'] ?? 'N/A') ?>
@@ -622,11 +566,8 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                             </div>
                         </td>
                         <td>
-                            <?php 
-                            $so_no = $order['sales_order_no'];
-                            if (isset($invoice_statuses[$so_no])): 
-                                $invoice = $invoice_statuses[$so_no];
-                            ?>
+                            <?php if (isset($invoice_statuses[$so_no])): 
+                                $invoice = $invoice_statuses[$so_no]; ?>
                                 <span class="status-badge <?= getInvoiceStatusBadgeClass($invoice['status']) ?>" style="font-size:10px;">
                                     <?= htmlspecialchars($invoice['status'] ?? 'N/A') ?>
                                 </span>
@@ -638,11 +579,9 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                             <?php endif; ?>
                         </td>
                         <td>
-                            <?php 
-                            if (isset($payment_statuses[$so_no])): 
+                            <?php if (isset($payment_statuses[$so_no])): 
                                 $payment = $payment_statuses[$so_no];
-                                $payment_status_display = !empty($payment['payment_status']) ? $payment['payment_status'] : 'Unpaid';
-                            ?>
+                                $payment_status_display = !empty($payment['payment_status']) ? $payment['payment_status'] : 'Unpaid'; ?>
                                 <span class="payment-status-badge <?= getPaymentStatusBadgeClass($payment_status_display) ?>">
                                     <?= ucfirst($payment_status_display) ?>
                                 </span>
@@ -658,7 +597,6 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                                 <a href="sales_order_list.php?so=<?= urlencode($order['sales_order_no']) ?>" class="btn-action btn-view">
                                     <i data-lucide="eye" style="width:14px;height:14px;"></i>
                                 </a>
-                                <!-- Edit and Delete buttons removed as requested -->
                             </div>
                         </td>
                     </tr>
@@ -673,13 +611,9 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                     ? 'No orders match your filter criteria.' 
                     : 'No sales orders found for ' . date('F Y') . '. Start by creating your first sales order.' ?></p>
                 <?php if (!empty($search_filter) || !empty($date_from) || !empty($date_to) || !empty($customer_filter) || !empty($truck_filter) || !empty($status_filter)): ?>
-                <a href="?" style="display:inline-block;margin-top:12px;padding:8px 20px;background:#f1f5f9;color:#475569;border-radius:6px;text-decoration:none;">
-                    Clear All Filters
-                </a>
+                <a href="?" style="display:inline-block;margin-top:12px;padding:8px 20px;background:#f1f5f9;color:#475569;border-radius:6px;text-decoration:none;">Clear All Filters</a>
                 <?php else: ?>
-                <a href="sales_order.php" style="display:inline-block;margin-top:16px;padding:8px 24px;background:#2563eb;color:white;border-radius:6px;text-decoration:none;">
-                    Create Sales Order
-                </a>
+                <a href="sales_order.php" style="display:inline-block;margin-top:16px;padding:8px 24px;background:#2563eb;color:white;border-radius:6px;text-decoration:none;">Create Sales Order</a>
                 <?php endif; ?>
             </div>
             <?php endif; ?>
@@ -711,23 +645,19 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
                 <?php
                 $start_page = max(1, $page - 2);
                 $end_page = min($total_pages, $page + 2);
-                
                 if ($start_page > 1) {
                     echo '<a href="?page=1' . $query_params . '" class="pagination-btn">1</a>';
                     if ($start_page > 2) echo '<span class="pagination-btn disabled">…</span>';
                 }
-                
                 for ($i = $start_page; $i <= $end_page; $i++) {
                     $active = $i === $page ? 'active' : '';
                     echo '<a href="?page=' . $i . $query_params . '" class="pagination-btn ' . $active . '">' . $i . '</a>';
                 }
-                
                 if ($end_page < $total_pages) {
                     if ($end_page < $total_pages - 1) echo '<span class="pagination-btn disabled">…</span>';
                     echo '<a href="?page=' . $total_pages . $query_params . '" class="pagination-btn">' . $total_pages . '</a>';
                 }
                 ?>
-
                 <?php if ($page < $total_pages): ?>
                 <a href="?page=<?= $page + 1 ?><?= $query_params ?>" class="pagination-btn">
                     Next <i data-lucide="chevron-right" style="width:16px;height:16px;"></i>
@@ -743,34 +673,23 @@ $is_default_month_view = empty($_GET['date_from']) && empty($_GET['date_to']) &&
 
 <script>
 lucide.createIcons();
-
-// User roles from PHP
 const userRoles = <?php echo json_encode($user_roles); ?>;
-    
-// Allowed pages from PHP
 const allowedPages = <?php echo json_encode($allowed_pages); ?>;
 
-// Check access function
 function checkAccess(page) {
     if (userRoles.includes('admin')) return true;
     for (let role of userRoles) {
-        if (allowedPages[role] && allowedPages[role].includes(page)) {
-            return true;
-        }
+        if (allowedPages[role] && allowedPages[role].includes(page)) return true;
     }
     const modal = document.getElementById('accessModal');
     modal.style.display = 'flex';
     return false;
 }
 
-// Auto-submit search on Enter
 document.getElementById('searchFilter')?.addEventListener('keyup', function(e) {
-    if (e.key === 'Enter') {
-        document.getElementById('filterForm').submit();
-    }
+    if (e.key === 'Enter') document.getElementById('filterForm').submit();
 });
 
-// Recreate icons after any DOM updates
 document.addEventListener('DOMContentLoaded', function() {
     lucide.createIcons();
 });

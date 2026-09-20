@@ -23,9 +23,9 @@ if (isset($_GET['action'])) {
         exit;
     }
     
-    // ─── Get Trucks for dropdown ───────────────────────────────────────────────
+    // ─── Get Trucks for dropdown (includes truck_type and plate_number) ────────
     if ($_GET['action'] === 'get_trucks') {
-        $stmt = $conn->query("SELECT truck_code, brand, model FROM oncall_forwarding.truck_masterlist ORDER BY truck_code");
+        $stmt = $conn->query("SELECT truck_code, brand, model, truck_type, plate_number FROM oncall_forwarding.truck_masterlist ORDER BY truck_code");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
@@ -34,14 +34,6 @@ if (isset($_GET['action'])) {
     // ─── Get Trailers for dropdown ─────────────────────────────────────────────
     if ($_GET['action'] === 'get_trailers') {
         $stmt = $conn->query("SELECT trailer_code, manufacturer as brand, model FROM oncall_forwarding.trailer_masterlist ORDER BY trailer_code");
-        $rows = $stmt->fetch_all(MYSQLI_ASSOC);
-        echo json_encode($rows);
-        exit;
-    }
-    
-    // ─── Get Prime Movers for dropdown ─────────────────────────────────────────
-    if ($_GET['action'] === 'get_prime_movers') {
-        $stmt = $conn->query("SELECT prime_mover_code, brand, model FROM oncall_forwarding.prime_movers_masterlist ORDER BY prime_mover_code");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
@@ -170,6 +162,7 @@ if (isset($_GET['action'])) {
         } elseif ($purchase_type === 'For Trailers') {
             $trailer_code = $vehicle_code;
         } elseif ($purchase_type === 'For Prime Movers') {
+            // Prime Movers now use truck_code since they come from truck_masterlist
             $prime_mover_code = $vehicle_code;
         } elseif ($purchase_type === 'For Motorpool') {
             $motorpool_category = $input['motorpool_category'] ?? null;
@@ -495,6 +488,14 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                             <option value="">-- Select --</option>
                         </select>
                     </div>
+                    <!-- Plate Number as dropdown (for truck & prime mover) / readonly for others -->
+                    <div class="form-group" id="vehicle-plate-group">
+                        <label id="vehicle-plate-label">Plate Number</label>
+                        <select id="vehicle-plate-select" onchange="onVehiclePlateChange(this.value)" style="display:none;">
+                            <option value="">-- Select Plate Number --</option>
+                        </select>
+                        <input type="text" id="vehicle-plate" readonly style="background: #f1f5f9;">
+                    </div>
                     <div class="form-group">
                         <label id="vehicle-brand-label">Brand / Manufacturer</label>
                         <input type="text" id="vehicle-brand" readonly style="background: #f1f5f9;">
@@ -665,12 +666,59 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     let allItemsData  = [];
     let trucksData    = [];
     let trailersData  = [];
-    let primeMoversData = [];
     let customersData = [];
     let employeesData = [];
     let rowCount      = 0;
     let isSyncing     = false;
+    let isVehicleSyncing = false;
     let selectedMotorpoolCategory = null;
+
+    // ── Helper: Check if a truck is a Prime Mover ──────────────────────────────
+    function isPrimeMover(truck) {
+        const type = (truck.truck_type || '').toLowerCase().replace(/[\s_]/g, '');
+        return type === 'primemover';
+    }
+
+    // ── Helper: Get trucks excluding Prime Movers ──────────────────────────────
+    function getRegularTrucks() {
+        return trucksData.filter(t => !isPrimeMover(t));
+    }
+
+    // ── Helper: Get only Prime Mover trucks ────────────────────────────────────
+    function getPrimeMoverTrucks() {
+        return trucksData.filter(t => isPrimeMover(t));
+    }
+
+    // ── Helper: Determine current vehicle dataset based on state ──────────────
+    function getCurrentVehicleDataset() {
+        const purchaseType = document.getElementById('purchase-type').value;
+        const isMotorpool = purchaseType === 'For Motorpool';
+
+        if (isMotorpool) {
+            const category = selectedMotorpoolCategory || 'truck';
+            switch(category) {
+                case 'truck':       return { data: getRegularTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Truck' };
+                case 'trailer':     return { data: trailersData, codeField: 'trailer_code', brandField: 'manufacturer', modelField: 'model', label: 'Trailer' };
+                case 'prime_mover': return { data: getPrimeMoverTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Prime Mover' };
+                case 'customer':    return { data: customersData, codeField: 'customer_code', brandField: 'full_name', modelField: '', label: 'Customer' };
+            }
+        } else {
+            switch(purchaseType) {
+                case 'For Truck Repair and Maintenance': return { data: getRegularTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Truck' };
+                case 'For Trailers':                     return { data: trailersData, codeField: 'trailer_code', brandField: 'manufacturer', modelField: 'model', label: 'Trailer' };
+                case 'For Prime Movers':                 return { data: getPrimeMoverTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Prime Mover' };
+            }
+        }
+        return null;
+    }
+
+    // ── Helper: Should plate be a dropdown? (only Truck & Prime Mover) ────────
+    function isPlateDropdown() {
+        const info = getCurrentVehicleDataset();
+        if (!info) return false;
+        // Only truck and prime mover support plate-number dropdown
+        return info.label === 'Truck' || info.label === 'Prime Mover';
+    }
 
     // ── Load Suppliers ─────────────────────────────────────────────────────────
     async function loadSuppliers() {
@@ -717,7 +765,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         addRow();
     }
     
-    // ── Load Trucks ────────────────────────────────────────────────────────────
+    // ── Load Trucks (includes Prime Movers) ────────────────────────────────────
     async function loadTrucks() {
         try {
             const res = await fetch('purchase_order.php?action=get_trucks');
@@ -734,16 +782,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             trailersData = await res.json();
         } catch (e) {
             console.error('Failed to load trailers:', e);
-        }
-    }
-    
-    // ── Load Prime Movers ─────────────────────────────────────────────────────
-    async function loadPrimeMovers() {
-        try {
-            const res = await fetch('purchase_order.php?action=get_prime_movers');
-            primeMoversData = await res.json();
-        } catch (e) {
-            console.error('Failed to load prime movers:', e);
         }
     }
     
@@ -820,13 +858,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             return;
         }
         
-        // Split by comma and trim each term
         const terms = paymentTermsString.split(',').map(term => term.trim()).filter(term => term !== '');
-        
-        // Remove duplicates
         const uniqueTerms = [...new Set(terms)];
         
-        // Add each term as an option
         uniqueTerms.forEach(term => {
             const option = document.createElement('option');
             option.value = term;
@@ -834,7 +868,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             paymentSelect.appendChild(option);
         });
         
-        // Auto-select the first term if available
         if (uniqueTerms.length > 0) {
             paymentSelect.value = uniqueTerms[0];
         }
@@ -905,19 +938,13 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         let discountAmount = parseFloat(row.querySelector('.discount-amount-input').value) || 0;
         const withVAT = document.getElementById('vat-toggle').checked;
         
-        // Calculate item total before discount
         let itemSubtotal = qty * unitCost;
         
-        // Calculate discount
-        // If discount percent is entered, calculate discount amount from it
         if (discountPercent > 0) {
             discountAmount = itemSubtotal * (discountPercent / 100);
             row.querySelector('.discount-amount-input').value = discountAmount.toFixed(2);
         }
-        // If discount amount is entered and discount percent is 0, use the amount
-        // Otherwise, discount percent takes precedence
         
-        // Apply discount
         let discountedTotal = itemSubtotal - discountAmount;
         
         let withoutVAT, vatAmount, totalCost;
@@ -984,7 +1011,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         row.querySelector('.unit-input').value = unit;
         row.querySelector('.price-input').value = parseFloat(price).toFixed(2);
         
-        // Store part number in the row data
         row.dataset.partNumber = partNumber;
         
         calculateRowTotals(row);
@@ -1016,9 +1042,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
 
     // ── Calculate Totals ──────────────────────────────────────────────────────
     function calcTotals() {
-        let totalItemSubtotal = 0; // Item subtotal before discounts
+        let totalItemSubtotal = 0;
         let totalItemDiscount = 0;
-        let subtotal = 0; // Subtotal after item discounts (excl. VAT)
+        let subtotal = 0;
         const withVAT = document.getElementById('vat-toggle').checked;
         
         document.querySelectorAll('#items-body tr').forEach(row => {
@@ -1032,7 +1058,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             totalItemDiscount += discountAmount;
             
             if (withVAT) {
-                // VAT = 12/112 of discounted total
                 const vatAmount = discountedTotal * (12 / 112);
                 const withoutVAT = discountedTotal - vatAmount;
                 subtotal += withoutVAT;
@@ -1041,7 +1066,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             }
         });
         
-        // Apply PO discount on subtotal (excl. VAT)
         const poDiscountPercent = parseFloat(document.getElementById('po-discount-percent').value) || 0;
         let poDiscountAmount = parseFloat(document.getElementById('po-discount-amount').value) || 0;
         
@@ -1050,35 +1074,30 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             document.getElementById('po-discount-amount').value = poDiscountAmount.toFixed(2);
         }
         
-        // ── CHANGED: Recalculate VAT and Grand Total AFTER PO Discount ──────────
         const subtotalAfterPODiscount = subtotal - poDiscountAmount;
         
         let finalVAT = 0;
         if (withVAT) {
-            // Recompute VAT based on the discounted subtotal
             finalVAT = subtotalAfterPODiscount * 0.12;
         }
         
         const freight = parseFloat(document.getElementById('freight').value) || 0;
         
-        // Grand Total = Discounted Subtotal + New VAT + Freight
         const grand = subtotalAfterPODiscount + finalVAT + freight;
         
-        // Display values
         document.getElementById('item-subtotal-display').textContent = formatPHP(totalItemSubtotal);
         document.getElementById('item-discount-total').textContent = formatPHP(totalItemDiscount);
         document.getElementById('subtotal').textContent = formatPHP(subtotal);
-        document.getElementById('vat-total').textContent = formatPHP(finalVAT); // Use the new finalVAT
+        document.getElementById('vat-total').textContent = formatPHP(finalVAT);
         document.getElementById('grand-total').textContent = formatPHP(grand);
         
-        // Withholding tax base is Subtotal (excl. tax) after PO discount
         updateWithholdingTax(subtotalAfterPODiscount, grand);
         
         return {
             itemSubtotal: totalItemSubtotal,
             totalItemDiscount,
             subtotal,
-            totalVAT: finalVAT, // Return the adjusted VAT
+            totalVAT: finalVAT,
             grand,
             poDiscountAmount,
             subtotalAfterPODiscount
@@ -1096,31 +1115,22 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             taxDetails.style.display = 'none';
         }
         
-        // ← CHANGED: Recompute totals and use the new (taxBase, grandTotal) signature
         const totals = calcTotals();
         updateWithholdingTax(totals.subtotalAfterPODiscount, totals.grand);
     }
     
-    /**
-     * Update the withholding tax display.
-     * @param {number} taxBase    Subtotal (excl. tax) after PO discount — base for the 5% WHT.
-     * @param {number} grandTotal Total PO Amount (VAT-incl., + freight) — used for Net Amount Due.
-     */
     function updateWithholdingTax(taxBase, grandTotal) {
         const isChecked = document.getElementById('apply-withholding-tax').checked;
         const taxBaseSpan = document.getElementById('tax-base-amount');
         const withholdingSpan = document.getElementById('withholding-tax-amount');
         const netAmountSpan = document.getElementById('net-amount-due');
         
-        // Always display the VAT-exclusive base
         if (taxBaseSpan) {
             taxBaseSpan.textContent = formatPHP(taxBase);
         }
         
         if (isChecked) {
-            // ← CHANGED: 5% of Subtotal (excl. tax), not of grand total
             const withholdingTax = taxBase * 0.05;
-            // Net = Total PO Amount − Withholding Tax
             const netAmount = grandTotal - withholdingTax;
             
             if (withholdingSpan) withholdingSpan.textContent = formatPHP(withholdingTax);
@@ -1135,7 +1145,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     function selectMotorpoolCategory(category) {
         selectedMotorpoolCategory = category;
         
-        // Update button styles
         document.querySelectorAll('.category-btn').forEach(btn => {
             btn.classList.remove('active');
             if (btn.dataset.category === category) {
@@ -1151,6 +1160,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         document.getElementById('vehicle-model').value = '';
         document.getElementById('vehicle-info-display').style.display = 'none';
         document.getElementById('vehicle-code').value = '';
+        document.getElementById('vehicle-plate').value = '';
+        document.getElementById('vehicle-plate-select').value = '';
         
         // Update label
         const categoryLabels = {
@@ -1170,15 +1181,56 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         };
         document.getElementById('vehicle-brand-label').textContent = brandLabels[category] || 'Brand / Manufacturer';
         
-        // Hide model field for customers (since customers don't have models)
+        // Hide model/plate field for customers
         const modelGroup = document.getElementById('vehicle-model-group');
+        const plateGroup = document.getElementById('vehicle-plate-group');
         if (category === 'customer') {
             modelGroup.style.display = 'none';
+            plateGroup.style.display = 'none';
         } else {
             modelGroup.style.display = 'block';
+            plateGroup.style.display = 'block';
         }
+
+        // Update plate display mode (dropdown for truck & prime mover, readonly otherwise)
+        updatePlateFieldMode();
     }
     
+    // ── Update Plate Field Mode (dropdown vs readonly input) ───────────────────
+    function updatePlateFieldMode() {
+        const plateSelect = document.getElementById('vehicle-plate-select');
+        const plateInput = document.getElementById('vehicle-plate');
+        const plateLabel = document.getElementById('vehicle-plate-label');
+
+        if (isPlateDropdown()) {
+            plateLabel.textContent = 'Plate Number';
+            plateSelect.style.display = 'block';
+            plateInput.style.display = 'none';
+        } else {
+            plateLabel.textContent = 'Plate Number';
+            plateSelect.style.display = 'none';
+            plateInput.style.display = 'block';
+        }
+    }
+
+    // ── Populate Plate Number Dropdown (for Truck & Prime Mover) ──────────────
+    function populatePlateNumberDropdown() {
+        const plateSelect = document.getElementById('vehicle-plate-select');
+        const info = getCurrentVehicleDataset();
+        if (!info) return;
+        
+        plateSelect.innerHTML = '<option value="">-- Select Plate Number --</option>';
+        
+        info.data.forEach(item => {
+            const plate = item.plate_number || '';
+            const code = item[info.codeField] || '';
+            if (plate) {
+                const displayText = `${plate} — ${code}`;
+                plateSelect.innerHTML += `<option value="${plate}" data-code="${code}">${displayText}</option>`;
+            }
+        });
+    }
+
     // ── Populate Motorpool Dropdown ───────────────────────────────────────────
     function populateMotorpoolDropdown(category) {
         const vehicleSelect = document.getElementById('vehicle-code');
@@ -1191,7 +1243,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         
         switch(category) {
             case 'truck':
-                data = trucksData;
+                data = getRegularTrucks();
                 codeField = 'truck_code';
                 brandField = 'brand';
                 modelField = 'model';
@@ -1203,8 +1255,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 modelField = 'model';
                 break;
             case 'prime_mover':
-                data = primeMoversData;
-                codeField = 'prime_mover_code';
+                data = getPrimeMoverTrucks();
+                codeField = 'truck_code';
                 brandField = 'brand';
                 modelField = 'model';
                 break;
@@ -1212,7 +1264,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 data = customersData;
                 codeField = 'customer_code';
                 brandField = 'full_name';
-                modelField = ''; // No model for customers
+                modelField = '';
                 break;
             default:
                 return;
@@ -1222,12 +1274,15 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             const label = item[codeField] || '';
             const brandVal = item[brandField] || '';
             const modelVal = item[modelField] || '';
-            // For customers, show "customer_code - full_name"
+            const plate = item.plate_number || '';
             const displayText = category === 'customer' 
                 ? `${label} - ${brandVal}`
-                : `${label}`;
-            vehicleSelect.innerHTML += `<option value="${label}" data-brand="${brandVal}" data-model="${modelVal}">${displayText}</option>`;
+                : label;
+            vehicleSelect.innerHTML += `<option value="${label}" data-brand="${brandVal}" data-model="${modelVal}" data-plate="${plate}">${displayText}</option>`;
         });
+
+        // Also populate plate dropdown if applicable
+        populatePlateNumberDropdown();
     }
     
     // ── Populate Vehicle Dropdown (for non-motorpool) ──────────────────────────
@@ -1242,7 +1297,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         
         switch(vehicleType) {
             case 'truck':
-                data = trucksData;
+                data = getRegularTrucks();
                 codeField = 'truck_code';
                 brandField = 'brand';
                 modelField = 'model';
@@ -1254,8 +1309,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 modelField = 'model';
                 break;
             case 'prime_mover':
-                data = primeMoversData;
-                codeField = 'prime_mover_code';
+                data = getPrimeMoverTrucks();
+                codeField = 'truck_code';
                 brandField = 'brand';
                 modelField = 'model';
                 break;
@@ -1265,140 +1320,147 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         
         data.forEach(item => {
             const label = item[codeField] || '';
-            vehicleSelect.innerHTML += `<option value="${label}" data-brand="${item[brandField] || ''}" data-model="${item[modelField] || ''}">${label}</option>`;
+            vehicleSelect.innerHTML += `<option value="${label}" data-brand="${item[brandField] || ''}" data-model="${item[modelField] || ''}" data-plate="${item.plate_number || ''}">${label}</option>`;
         });
+
+        // Also populate plate dropdown if applicable
+        populatePlateNumberDropdown();
     }
     
     // ── Handle Vehicle Code Change ─────────────────────────────────────────────
     function onVehicleCodeChange(vehicleCode) {
-        const purchaseType = document.getElementById('purchase-type').value;
-        let selectedVehicle = null;
-        let data = [];
-        let codeField = '';
-        let brandField = '';
-        let modelField = '';
-        let displayLabel = '';
-        let isMotorpool = purchaseType === 'For Motorpool';
-        
-        if (isMotorpool) {
-            // Use the selected motorpool category
-            const category = selectedMotorpoolCategory || 'truck';
-            switch(category) {
-                case 'truck':
-                    data = trucksData;
-                    codeField = 'truck_code';
-                    brandField = 'brand';
-                    modelField = 'model';
-                    displayLabel = 'Truck';
-                    break;
-                case 'trailer':
-                    data = trailersData;
-                    codeField = 'trailer_code';
-                    brandField = 'manufacturer';
-                    modelField = 'model';
-                    displayLabel = 'Trailer';
-                    break;
-                case 'prime_mover':
-                    data = primeMoversData;
-                    codeField = 'prime_mover_code';
-                    brandField = 'brand';
-                    modelField = 'model';
-                    displayLabel = 'Prime Mover';
-                    break;
-                case 'customer':
-                    data = customersData;
-                    codeField = 'customer_code';
-                    brandField = 'full_name';
-                    modelField = ''; // No model for customers
-                    displayLabel = 'Customer';
-                    break;
-                default:
-                    return;
-            }
-        } else {
-            // Standard vehicle selection
-            switch(purchaseType) {
-                case 'For Truck Repair and Maintenance':
-                    data = trucksData;
-                    codeField = 'truck_code';
-                    brandField = 'brand';
-                    modelField = 'model';
-                    displayLabel = 'Truck';
-                    break;
-                case 'For Trailers':
-                    data = trailersData;
-                    codeField = 'trailer_code';
-                    brandField = 'manufacturer';
-                    modelField = 'model';
-                    displayLabel = 'Trailer';
-                    break;
-                case 'For Prime Movers':
-                    data = primeMoversData;
-                    codeField = 'prime_mover_code';
-                    brandField = 'brand';
-                    modelField = 'model';
-                    displayLabel = 'Prime Mover';
-                    break;
-                default:
-                    return;
-            }
+        if (isVehicleSyncing) return;
+        isVehicleSyncing = true;
+
+        const info = getCurrentVehicleDataset();
+        if (!info) {
+            isVehicleSyncing = false;
+            return;
         }
-        
-        selectedVehicle = data.find(item => item[codeField] === vehicleCode);
+
+        const selectedVehicle = info.data.find(item => item[info.codeField] === vehicleCode);
         const brandInput = document.getElementById('vehicle-brand');
         const modelInput = document.getElementById('vehicle-model');
+        const plateInput = document.getElementById('vehicle-plate');
+        const plateSelect = document.getElementById('vehicle-plate-select');
         const infoDisplay = document.getElementById('vehicle-info-display');
-        
+
         if (selectedVehicle) {
-            brandInput.value = selectedVehicle[brandField] || '';
-            modelInput.value = selectedVehicle[modelField] || '';
-            
-            const brandLabel = isMotorpool && selectedMotorpoolCategory === 'customer' ? 'Customer Name' : 
-                              (brandField === 'manufacturer' ? 'Manufacturer' : 'Brand');
-            
-            infoDisplay.style.display = 'block';
-            let infoHTML = `<strong>Selected ${displayLabel}:</strong> ${selectedVehicle[codeField]}<br>`;
-            infoHTML += `<strong>${brandLabel}:</strong> ${selectedVehicle[brandField] || 'N/A'}`;
-            // Only show model if it exists (not for customers)
-            if (selectedVehicle[modelField]) {
-                infoHTML += `<br><strong>Model:</strong> ${selectedVehicle[modelField]}`;
+            brandInput.value = selectedVehicle[info.brandField] || '';
+            modelInput.value = selectedVehicle[info.modelField] || '';
+            plateInput.value = selectedVehicle.plate_number || '';
+
+            // Sync plate dropdown if it's active
+            if (isPlateDropdown()) {
+                const targetPlate = selectedVehicle.plate_number || '';
+                if (plateSelect.value !== targetPlate) {
+                    // Find matching option by plate
+                    const opt = Array.from(plateSelect.options).find(o => o.value === targetPlate);
+                    plateSelect.value = opt ? targetPlate : '';
+                }
             }
-            infoDisplay.innerHTML = infoHTML;
+
+            renderVehicleInfo(selectedVehicle, info);
         } else {
             brandInput.value = '';
             modelInput.value = '';
+            plateInput.value = '';
+            if (isPlateDropdown()) plateSelect.value = '';
             infoDisplay.style.display = 'none';
         }
+
+        isVehicleSyncing = false;
+    }
+
+    // ── Handle Vehicle Plate Change (dropdown) ─────────────────────────────────
+    function onVehiclePlateChange(plateValue) {
+        if (isVehicleSyncing) return;
+        isVehicleSyncing = true;
+
+        const info = getCurrentVehicleDataset();
+        if (!info) {
+            isVehicleSyncing = false;
+            return;
+        }
+
+        const selectedVehicle = info.data.find(item => (item.plate_number || '') === plateValue);
+        const codeSelect = document.getElementById('vehicle-code');
+        const brandInput = document.getElementById('vehicle-brand');
+        const modelInput = document.getElementById('vehicle-model');
+        const plateInput = document.getElementById('vehicle-plate');
+        const infoDisplay = document.getElementById('vehicle-info-display');
+
+        if (selectedVehicle) {
+            const targetCode = selectedVehicle[info.codeField] || '';
+            if (codeSelect.value !== targetCode) {
+                codeSelect.value = targetCode;
+            }
+            brandInput.value = selectedVehicle[info.brandField] || '';
+            modelInput.value = selectedVehicle[info.modelField] || '';
+            plateInput.value = selectedVehicle.plate_number || '';
+
+            renderVehicleInfo(selectedVehicle, info);
+        } else {
+            codeSelect.value = '';
+            brandInput.value = '';
+            modelInput.value = '';
+            plateInput.value = '';
+            infoDisplay.style.display = 'none';
+        }
+
+        isVehicleSyncing = false;
+    }
+
+    // ── Render Vehicle Info Panel ──────────────────────────────────────────────
+    function renderVehicleInfo(selectedVehicle, info) {
+        const infoDisplay = document.getElementById('vehicle-info-display');
+        const isMotorpool = document.getElementById('purchase-type').value === 'For Motorpool';
+        const brandLabel = isMotorpool && selectedMotorpoolCategory === 'customer' ? 'Customer Name' : 
+                          (info.brandField === 'manufacturer' ? 'Manufacturer' : 'Brand');
+
+        infoDisplay.style.display = 'block';
+        let infoHTML = `<strong>Selected ${info.label}:</strong> ${selectedVehicle[info.codeField]}<br>`;
+        infoHTML += `<strong>${brandLabel}:</strong> ${selectedVehicle[info.brandField] || 'N/A'}`;
+        if (selectedVehicle[info.modelField]) {
+            infoHTML += `<br><strong>Model:</strong> ${selectedVehicle[info.modelField]}`;
+        }
+        if (selectedVehicle.plate_number) {
+            infoHTML += `<br><strong>Plate Number:</strong> ${selectedVehicle.plate_number}`;
+        }
+        infoDisplay.innerHTML = infoHTML;
     }
     
     // ── Handle Purchase Type Change ──────────────────────────────────────────
     function onPurchaseTypeChange(purchaseType) {
         const vehicleSection = document.getElementById('vehicle-section');
         const sectionTitle = document.getElementById('vehicle-section-title');
-        const sectionLabel = document.getElementById('vehicle-section-label');
-        const vehicleBadge = document.getElementById('vehicle-badge');
         const codeLabel = document.getElementById('vehicle-code-label');
         const vehicleSelect = document.getElementById('vehicle-code');
         const brandInput = document.getElementById('vehicle-brand');
         const modelInput = document.getElementById('vehicle-model');
+        const plateInput = document.getElementById('vehicle-plate');
+        const plateSelect = document.getElementById('vehicle-plate-select');
         const infoDisplay = document.getElementById('vehicle-info-display');
         const motorpoolContainer = document.getElementById('motorpool-category-container');
         const modelGroup = document.getElementById('vehicle-model-group');
+        const plateGroup = document.getElementById('vehicle-plate-group');
         
         // Reset vehicle fields
         vehicleSelect.value = '';
         brandInput.value = '';
         modelInput.value = '';
+        plateInput.value = '';
+        plateSelect.value = '';
         infoDisplay.style.display = 'none';
         
-        // Determine which vehicle types need to show
         const vehicleTypes = ['For Truck Repair and Maintenance', 'For Trailers', 'For Prime Movers'];
         const isMotorpool = purchaseType === 'For Motorpool';
         
         if (vehicleTypes.includes(purchaseType)) {
             vehicleSection.style.display = 'block';
             motorpoolContainer.style.display = 'none';
-            modelGroup.style.display = 'block'; // Show model for vehicles
+            modelGroup.style.display = 'block';
+            plateGroup.style.display = 'block';
             
             let icon = 'truck';
             let label = '';
@@ -1433,7 +1495,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     break;
             }
             
-            // Update section title
             sectionTitle.innerHTML = `
                 <i data-lucide="${icon}" style="width:16px;height:16px;"></i>
                 <span id="vehicle-section-label">${label}</span>
@@ -1441,37 +1502,38 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             `;
             codeLabel.textContent = codeFieldLabel + ' *';
             
-            // Recreate icons
             lucide.createIcons();
-            
-            // Make vehicle code required
             vehicleSelect.required = true;
-            
-            // Reset motorpool category
             selectedMotorpoolCategory = null;
+            
+            // Update plate field mode (dropdown for truck/prime mover, readonly for trailer)
+            updatePlateFieldMode();
             
         } else if (isMotorpool) {
             vehicleSection.style.display = 'block';
             motorpoolContainer.style.display = 'block';
-            modelGroup.style.display = 'block'; // Will be hidden if customer is selected
+            modelGroup.style.display = 'block';
+            plateGroup.style.display = 'block';
             
-            // Update section title
             sectionTitle.innerHTML = `
                 <i data-lucide="users" style="width:16px;height:16px;"></i>
                 <span id="vehicle-section-label">Motorpool Information</span>
                 <span class="vehicle-badge motorpool">Motorpool</span>
             `;
             
-            // Reset category selection
             document.querySelectorAll('.category-btn').forEach(btn => btn.classList.remove('active'));
             selectedMotorpoolCategory = null;
             codeLabel.textContent = 'Select a category above *';
             vehicleSelect.innerHTML = '<option value="">-- Select a category first --</option>';
             vehicleSelect.required = true;
             
-            // Reset fields
             document.getElementById('vehicle-brand-label').textContent = 'Brand / Manufacturer';
             modelGroup.style.display = 'block';
+            plateGroup.style.display = 'block';
+            
+            // Reset plate select options; will be populated when a category is chosen
+            plateSelect.innerHTML = '<option value="">-- Select Plate Number --</option>';
+            updatePlateFieldMode();
             
             lucide.createIcons();
             
@@ -1502,21 +1564,17 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         let netAmountDue = totals.grand;
         
         if (applyWithholdingTax) {
-            // Withholding base = Subtotal (excl. tax) after PO discount
             const withholdingBase = totals.subtotalAfterPODiscount;
             withholdingTaxPercent = 5;
             withholdingTaxAmount = withholdingBase * 0.05;
-            // Net Amount Due = Total PO Amount (VAT-incl.) − Withholding Tax
             netAmountDue = totals.grand - withholdingTaxAmount;
         }
         
         const withVAT = document.getElementById('vat-toggle').checked;
         
-        // Get PO-level discount
         const discountPercent = parseFloat(document.getElementById('po-discount-percent').value) || 0;
         const discountAmount = parseFloat(document.getElementById('po-discount-amount').value) || 0;
         
-        // Get vehicle info based on purchase type
         let vehicleCode = null;
         let vehicleBrand = null;
         let vehicleModel = null;
@@ -1536,7 +1594,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             vehicleModel = document.getElementById('vehicle-model').value || null;
             motorpoolCategory = selectedMotorpoolCategory;
             
-            // Get the display label for the category
             const categoryLabels = {
                 'truck': 'Truck',
                 'trailer': 'Trailer',
@@ -1560,9 +1617,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             warranty: document.getElementById('warranty').value,
             remarks: document.getElementById('remarks').value,
             freight: parseFloat(document.getElementById('freight').value) || 0,
-            subtotal: totals.subtotal, // This is the original subtotal (excl. tax) before PO discount
-            total_vat: totals.totalVAT, // This is now the ADJUSTED VAT
-            total_amount: totals.grand, // This is now the ADJUSTED Total PO Amount
+            subtotal: totals.subtotal,
+            total_vat: totals.totalVAT,
+            total_amount: totals.grand,
             with_vat: withVAT ? 1 : 0,
             withholding_tax_percent: withholdingTaxPercent,
             withholding_tax_amount: withholdingTaxAmount,
@@ -1600,8 +1657,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 let withoutVAT, vatAmount;
                 
                 if (withVAT) {
-                    // Note: For individual items, we show the VAT portion based on the undiscounted PO level.
-                    // The backend recalculates the final PO total, but for line items, this is the standard representation.
                     withoutVAT = discountedTotal / 1.12;
                     vatAmount = discountedTotal - withoutVAT;
                 } else {
@@ -1654,13 +1709,11 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             return;
         }
         
-        // Validate Requested By
         if (!document.getElementById('requested-by-employee').value) {
             alert('Please select who requested this purchase order');
             return;
         }
         
-        // Check vehicle selection for relevant purchase types
         const vehicleTypes = ['For Truck Repair and Maintenance', 'For Trailers', 'For Prime Movers'];
         const isMotorpool = purchaseType === 'For Motorpool';
         
@@ -1732,13 +1785,11 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     }
 
     // ── Init ──────────────────────────────────────────────────────────────────
-    // Load suppliers, items, trucks, trailers, prime movers, customers, and employees in parallel
     Promise.all([
         loadSuppliers(),
         loadAllItems(),
         loadTrucks(),
         loadTrailers(),
-        loadPrimeMovers(),
         loadCustomers(),
         loadEmployees()
     ]).then(() => {

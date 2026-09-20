@@ -670,7 +670,7 @@ if (isset($_SESSION['user_id'])) {
     <div class="nav-container">
         <div class="logo">
             <img src="images/oncall-forwarding.png" alt="OnCall Forwarding Logo">
-            <span>OnCall Vehicle Rental <span style="color: red; font-size: 13px; font-style: italic;">(VER. 49)</span></span>
+            <span>OnCall Vehicle Rental <span style="color: red; font-size: 13px; font-style: italic;">(VER. 51)</span></span>
         </div>
         <ul class="nav-menu">
             <li><a href="#home" class="active">Home</a></li>

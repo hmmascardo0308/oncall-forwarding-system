@@ -51,7 +51,7 @@
         }
         .details-grid .grid-section {
             background: #f9f9f9;
-            padding: 15px;
+            padding: 5px;
             border-radius: 5px;
             border: 1px solid #eee;
         }
@@ -505,7 +505,7 @@
             }
             
             .copy-wrapper {
-                padding: 10px 15px 12px 15px;
+                padding: 10px 10px 10px 10px;
                 height: 148.5mm;
                 border-bottom: 2px dashed #000 !important;
                 page-break-inside: avoid;

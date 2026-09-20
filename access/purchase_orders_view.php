@@ -85,6 +85,26 @@ if ($selected_po) {
     $selected_requested_by = $po_details['requested_by'] ?? '';
 }
 
+// ─── CHANGED: helper to determine if the PO can be cancelled ─────────────
+// A PO cannot be cancelled once there is any payment or delivery progress.
+// Blocking conditions (checked case-insensitively):
+//   delivery_payment = Partially Paid  or  Fully Paid
+//   delivery_status  = Partially Received  or  Fully Received
+// Note: Cancelled / Late Delivery / Pending / N/A do NOT block cancellation.
+function isPurchaseOrderCancellable($delivery_status, $delivery_payment) {
+    $ds = strtolower(trim((string)$delivery_status));
+    $dp = strtolower(trim((string)$delivery_payment));
+
+    $blocked_payment_statuses = ['partially paid', 'fully paid'];
+    $blocked_delivery_statuses = ['partially received', 'fully received'];
+
+    if (in_array($dp, $blocked_payment_statuses, true)) return false;
+    if (in_array($ds, $blocked_delivery_statuses, true)) return false;
+
+    return true;
+}
+// ─── END CHANGED ─────────────────────────────────────────────────────────
+
 // Handle cancel / restore PO action
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cancel_po') {
     header('Content-Type: application/json');
@@ -97,8 +117,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit;
     }
 
-    // Get current status
-    $stmt = $conn->prepare("SELECT status FROM purchase_order WHERE po_number = ? LIMIT 1");
+    // Get current status + delivery info
+    $stmt = $conn->prepare("SELECT status, delivery_status, delivery_payment FROM purchase_order WHERE po_number = ? LIMIT 1");
     $stmt->bind_param("s", $po_num);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -110,10 +130,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit;
     }
 
-    $current_status = strtolower($row['status'] ?? '');
+    $current_status   = strtolower($row['status'] ?? '');
+    $delivery_status  = $row['delivery_status'] ?? 'Pending';
+    $delivery_payment = $row['delivery_payment'] ?? 'Pending';
 
     if ($current_status === 'cancelled') {
-        // Restore to Created
+        // Restore to Created — always allowed
         $stmt = $conn->prepare("UPDATE purchase_order SET status = 'Created', cancelled_by = NULL, cancelled_at = NULL WHERE po_number = ?");
         $stmt->bind_param("s", $po_num);
         $new_status       = 'Created';
@@ -121,6 +143,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $cancelled_by_out = null;
         $cancelled_at_out = null;
     } else {
+        // ─── CHANGED: block cancellation if payment/delivery progress exists ───
+        if (!isPurchaseOrderCancellable($delivery_status, $delivery_payment)) {
+            echo json_encode([
+                'success' => false,
+                'blocked' => true,
+                'message' => 'This purchase order cannot be cancelled because it already has payment or delivery progress '
+                           . '(Delivery Status: ' . htmlspecialchars($delivery_status) . ', '
+                           . 'Payment Status: ' . htmlspecialchars($delivery_payment) . ').'
+            ]);
+            exit;
+        }
+        // ─── END CHANGED ───
+
         // Cancel the PO — use PHP-generated Asia/Manila timestamp
         $cancelled_at = date('Y-m-d H:i:s'); // Asia/Manila
         $stmt = $conn->prepare("UPDATE purchase_order SET status = 'Cancelled', cancelled_by = ?, cancelled_at = ? WHERE po_number = ?");
@@ -151,6 +186,16 @@ $is_printed = false;
 if ($po_details && isset($po_details['print_status']) && strtolower($po_details['print_status']) === 'printed') {
     $is_printed = true;
 }
+
+// ─── CHANGED: compute cancellable flag for the selected PO (UI layer) ───
+$can_cancel_po = true;
+if ($po_details) {
+    $can_cancel_po = isPurchaseOrderCancellable(
+        $po_details['delivery_status'] ?? 'Pending',
+        $po_details['delivery_payment'] ?? 'Pending'
+    );
+}
+// ─── END CHANGED ─────────────────────────────────────────────────────────
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -165,7 +210,21 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
 
-  
+    <!-- ─── CHANGED: styles for disabled cancel button ─── -->
+    <style>
+        .cancel-toggle-btn.is-disabled,
+        .cancel-toggle-btn[disabled] {
+            opacity: 0.55;
+            cursor: not-allowed;
+            pointer-events: auto; /* allow the tooltip to show */
+        }
+        .cancel-toggle-btn.is-disabled:hover {
+            /* no hover lift when disabled */
+            transform: none;
+            box-shadow: none;
+        }
+    </style>
+    <!-- ─── END CHANGED ─── -->
 </head>
 <body>
 
@@ -247,12 +306,24 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
                         <!-- <span class="status-badge <?php echo strtolower($po_details['status'] ?? 'created'); ?>" id="po-status-badge">
                             <?php echo htmlspecialchars($po_details['status'] ?? 'Created'); ?>
                         </span> -->
+
+                        <?php
+                        // ─── CHANGED: disable the Cancel button when PO cannot be cancelled ───
+                        $cancel_disabled = (!$is_cancelled && !$can_cancel_po);
+                        $cancel_title = $is_cancelled
+                            ? 'Restore this purchase order'
+                            : ($can_cancel_po
+                                ? 'Cancel this purchase order'
+                                : 'Cannot cancel — this PO already has payment or delivery progress');
+                        ?>
                         <button type="button" 
-                                class="cancel-toggle-btn <?php echo $is_cancelled ? 'is-cancelled' : ''; ?>" 
+                                class="cancel-toggle-btn <?php echo $is_cancelled ? 'is-cancelled' : ''; ?> <?php echo $cancel_disabled ? 'is-disabled' : ''; ?>" 
                                 id="cancelPOBtn"
                                 data-po-number="<?php echo htmlspecialchars($po_details['po_number']); ?>"
                                 data-cancelled="<?php echo $is_cancelled ? '1' : '0'; ?>"
-                                title="<?php echo $is_cancelled ? 'Restore this purchase order' : 'Cancel this purchase order'; ?>">
+                                data-can-cancel="<?php echo $can_cancel_po ? '1' : '0'; ?>"
+                                <?php echo $cancel_disabled ? 'disabled' : ''; ?>
+                                title="<?php echo htmlspecialchars($cancel_title); ?>">
                             <i data-lucide="<?php echo $is_cancelled ? 'rotate-ccw' : 'ban'; ?>" style="width:14px;height:14px;"></i>
                             <span><?php echo $is_cancelled ? 'Restore PO' : 'Cancel PO'; ?></span>
                         </button>
@@ -420,11 +491,11 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
                                     <?php echo $item_discount_percent > 0 ? number_format($item_discount_percent, 2) . '%' : '0%'; ?>
                                 </td>
                                 <td style="text-align:right;<?php echo $item_discount > 0 ? 'color:#dc2626;font-weight:600;' : 'color:var(--text-muted);'; ?>">
-                                    ₱<?php echo number_format($item_discount, 2); ?>
+                                    ₱ <?php echo number_format($item_discount, 2); ?>
                                 </td>
-                                <td style="text-align:right;font-weight:500;">₱<?php echo number_format($without_vat, 2); ?></td>
-                                <td style="text-align:right;font-weight:500;">₱<?php echo number_format($vat_amount, 2); ?></td>
-                                <td style="text-align:right;font-weight:600;">₱<?php echo number_format($discounted_total, 2); ?></td>
+                                <td style="text-align:right;font-weight:500;">₱ <?php echo number_format($without_vat, 2); ?></td>
+                                <td style="text-align:right;font-weight:500;">₱ <?php echo number_format($vat_amount, 2); ?></td>
+                                <td style="text-align:right;font-weight:600;">₱ <?php echo number_format($discounted_total, 2); ?></td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -523,39 +594,39 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
                         ?>
                         <div class="totals-row">
                             <span>Item Subtotal</span>
-                            <span>₱<?php echo number_format($item_subtotal_before_discounts, 2); ?></span>
+                            <span>₱ <?php echo number_format($item_subtotal_before_discounts, 2); ?></span>
                         </div>
                         
                         <?php if ($total_item_discount > 0): ?>
                         <div class="totals-row" style="color:#dc2626;">
                             <span>Item Discounts</span>
-                            <span>- ₱<?php echo number_format($total_item_discount, 2); ?></span>
+                            <span>- ₱ <?php echo number_format($total_item_discount, 2); ?></span>
                         </div>
                         <?php endif; ?>
                         
                         <div class="totals-row" style="border-top:1px dashed #d1d5db;padding-top:6px;">
                             <span>Subtotal (excl. tax)</span>
-                            <span>₱<?php echo number_format($subtotal, 2); ?></span>
+                            <span>₱ <?php echo number_format($subtotal, 2); ?></span>
                         </div>
                         
                         <?php if ($po_discount_percent > 0 && $po_discount_amount > 0): ?>
                         <div class="totals-row" style="color:#dc2626;">
                             <span>PO Discount (<?php echo number_format($po_discount_percent, 2); ?>%)</span>
-                            <span>- ₱<?php echo number_format($po_discount_amount, 2); ?></span>
+                            <span>- ₱ <?php echo number_format($po_discount_amount, 2); ?></span>
                         </div>
                         <?php endif; ?>
                         
                         <div class="totals-row">
                             <span>Total VAT</span>
-                            <span>₱<?php echo number_format($total_vat, 2); ?></span>
+                            <span>₱ <?php echo number_format($total_vat, 2); ?></span>
                         </div>
                         <div class="totals-row">
                             <span>Shipping / Freight</span>
-                            <span>₱<?php echo number_format($freight, 2); ?></span>
+                            <span>₱ <?php echo number_format($freight, 2); ?></span>
                         </div>
                         <div class="totals-row total-final">
-                            <span>Total PO Amount</span> 
-                            <span>₱<?php echo number_format($grand_total, 2); ?></span>
+                            <span>Total PO Amount</span>&nbsp;
+                            <span>₱ <?php echo number_format($grand_total, 2); ?></span>
                         </div>
                     </div>
                     
@@ -571,15 +642,15 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
                         <div class="tax-details-view">
                             <div class="tax-row-view">
                                 <span class="tax-label-view">Subtotal (excl. tax): </span>
-                                <span class="tax-value-view">₱<?php echo number_format($wht_base, 2); ?></span>
+                                <span class="tax-value-view">₱ <?php echo number_format($wht_base, 2); ?></span>
                             </div>
                             <div class="tax-row-view">
                                 <span class="tax-label-view">Withholding Tax (<?php echo $po_summary['withholding_tax_percent']; ?>%):</span>
-                                <span class="tax-value-view">₱<?php echo number_format($withholding_tax_amount, 2); ?></span>
+                                <span class="tax-value-view">₱ <?php echo number_format($withholding_tax_amount, 2); ?></span>
                             </div>
                             <div class="tax-row-view net-amount-row-view">
                                 <span class="tax-label-view">Net Amount Due:</span>
-                                <span class="tax-value-view">₱<?php echo number_format($net_amount_due, 2); ?></span>
+                                <span class="tax-value-view">₱ <?php echo number_format($net_amount_due, 2); ?></span>
                             </div>
                         </div>
                     </div>
@@ -594,7 +665,7 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
                         <div class="tax-details-view">
                             <div class="tax-row-view net-amount-row-view">
                                 <span class="tax-label-view">Net Amount Due:</span>
-                                <span class="tax-value-view">₱<?php echo number_format($grand_total, 2); ?></span>
+                                <span class="tax-value-view">₱ <?php echo number_format($grand_total, 2); ?></span>
                             </div>
                         </div>
                     </div>
@@ -646,6 +717,14 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
         cancelBtn.addEventListener('click', function() {
             const poNumber    = this.getAttribute('data-po-number');
             const isCancelled = this.getAttribute('data-cancelled') === '1';
+            const canCancel   = this.getAttribute('data-can-cancel') === '1';
+
+            // ─── CHANGED: front-line guard — never send the request if blocked ───
+            if (!isCancelled && !canCancel) {
+                alert('This purchase order cannot be cancelled because it already has payment or delivery progress.');
+                return;
+            }
+            // ─── END CHANGED ───
 
             const confirmMsg = isCancelled
                 ? 'Are you sure you want to restore this purchase order to "Created" status?'
@@ -677,10 +756,16 @@ if ($po_details && isset($po_details['print_status']) && strtolower($po_details[
                     // Reload to reflect new status, cancelled_by, and cancelled_at
                     location.reload();
                 } else {
-                    alert('Error: ' + (data.message || 'Unknown error'));
+                    // ─── CHANGED: nicer message for the blocked case ───
+                    if (data.blocked) {
+                        alert(data.message || 'This purchase order cannot be cancelled.');
+                    } else {
+                        alert('Error: ' + (data.message || 'Unknown error'));
+                    }
                     this.disabled = false;
                     this.innerHTML = originalHTML;
                     lucide.createIcons();
+                    // ─── END CHANGED ───
                 }
             })
             .catch(error => {

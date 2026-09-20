@@ -306,10 +306,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_employee'])) {
             // Handle image operations
             $imgNote = '';
 
-            // If employee_code changed, and there was an image, we need to handle it
-            // (the file is named based on employee_code, but stored in profile_picture column)
-            // We'll use the new employee_code for any image operations going forward.
-
             // Remove existing image?
             if (!empty($_POST['remove_employee_image']) && $_POST['remove_employee_image'] == '1') {
                 deleteEmployeeImage($conn, $employee_code);
@@ -380,32 +376,32 @@ $employeeImageMap = getEmployeeImageMap($conn);
 
 $next_employee_code = generateEmployeeCode($conn);
 
-$common_positions = [
-    'ACCOUNTANT' => 'Accountant',
-    'ADMINISTRATIVE ASSISTANT' => 'Administrative Assistant',
-    'BOOKKEEPER' => 'Bookkeeper',
-    'CASHIER' => 'Cashier',
-    'CLERK' => 'Clerk',
-    'COORDINATOR' => 'Coordinator',
-    'DISPATCHER' => 'Dispatcher',
-    'DRIVER' => 'Driver',
-    'FLEET MANAGER' => 'Fleet Manager',
-    'HUMAN RESOURCES' => 'Human Resources',
-    'INVENTORY CLERK' => 'Inventory Clerk',
-    'LOGISTICS COORDINATOR' => 'Logistics Coordinator',
-    'MAINTENANCE' => 'Maintenance',
-    'MANAGER' => 'Manager',
-    'MECHANIC' => 'Mechanic',
-    'OPERATIONS MANAGER' => 'Operations Manager',
-    'PURCHASING AGENT' => 'Purchasing Agent',
-    'RECEPTIONIST' => 'Receptionist',
-    'SALES REPRESENTATIVE' => 'Sales Representative',
-    'SECURITY GUARD' => 'Security Guard',
-    'SHIPPING CLERK' => 'Shipping Clerk',
-    'SUPERVISOR' => 'Supervisor',
-    'WAREHOUSE WORKER' => 'Warehouse Worker',
-    'OTHER' => 'Other'
-];
+// ============================================================
+// LOAD POSITIONS, DEPARTMENTS, LOCATIONS FROM DATABASE
+// ============================================================
+$db_positions = [];
+$res = $conn->query("SELECT work_position FROM work_position ORDER BY work_position ASC");
+if ($res) {
+    while ($row = $res->fetch_assoc()) {
+        $db_positions[] = $row['work_position'];
+    }
+}
+
+$db_departments = [];
+$res = $conn->query("SELECT work_department FROM work_department ORDER BY work_department ASC");
+if ($res) {
+    while ($row = $res->fetch_assoc()) {
+        $db_departments[] = $row['work_department'];
+    }
+}
+
+$db_locations = [];
+$res = $conn->query("SELECT work_location FROM work_location ORDER BY work_location ASC");
+if ($res) {
+    while ($row = $res->fetch_assoc()) {
+        $db_locations[] = $row['work_location'];
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -644,7 +640,7 @@ $common_positions = [
     <div class="modal">
         <div class="modal-header">
             <div class="modal-title">Add New Employee</div>
-            <button class="modal-close" id="closeAddModal">×</button>
+            <button class="modal-close" id="closeAddModal">x</button>
         </div>
         <form method="POST" id="addEmployeeForm" enctype="multipart/form-data">
             <div class="modal-body">
@@ -657,7 +653,7 @@ $common_positions = [
                                    readonly>
                             <span class="auto-generate-badge">Auto</span>
                         </div>
-                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
                             Automatically generated
                         </div>
                     </div>
@@ -702,25 +698,42 @@ $common_positions = [
                     </div>
 
                     <div class="form-group col-3">
-                        <label for="add_department">Department</label>
-                        <input type="text" id="add_department" name="department"
-                            oninput="this.value = this.value.toUpperCase()">
-                    </div>
-
-                    <div class="form-group col-3">
                         <label for="add_position">Position *</label>
                         <select id="add_position" name="position" required>
                             <option value="">Select Position</option>
-                            <?php foreach ($common_positions as $value => $label): ?>
-                                <option value="<?php echo $value; ?>"><?php echo $label; ?></option>
+                            <?php foreach ($db_positions as $pos): ?>
+                                <option value="<?php echo htmlspecialchars($pos); ?>"><?php echo htmlspecialchars($pos); ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
+                            If not listed, add it in General Settings.
+                        </div>
+                    </div>
+
+                    <div class="form-group col-3">
+                        <label for="add_department">Department</label>
+                        <select id="add_department" name="department">
+                            <option value="">Select Department</option>
+                            <?php foreach ($db_departments as $dept): ?>
+                                <option value="<?php echo htmlspecialchars($dept); ?>"><?php echo htmlspecialchars($dept); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
+                            If not listed, add it in General Settings.
+                        </div>
                     </div>
 
                     <div class="form-group col-3">
                         <label for="add_location">Location</label>
-                        <input type="text" id="add_location" name="location"
-                            oninput="this.value = this.value.toUpperCase()">
+                        <select id="add_location" name="location">
+                            <option value="">Select Location</option>
+                            <?php foreach ($db_locations as $loc): ?>
+                                <option value="<?php echo htmlspecialchars($loc); ?>"><?php echo htmlspecialchars($loc); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
+                            If not listed, add it in General Settings.
+                        </div>
                     </div>
 
                     <div class="form-group col-3">
@@ -820,25 +833,42 @@ $common_positions = [
                     </div>
 
                     <div class="form-group col-3">
-                        <label for="edit_department">Department</label>
-                        <input type="text" id="edit_department" name="department"
-                            oninput="this.value = this.value.toUpperCase()">
-                    </div>
-
-                    <div class="form-group col-3">
                         <label for="edit_position">Position *</label>
                         <select id="edit_position" name="position" required>
                             <option value="">Select Position</option>
-                            <?php foreach ($common_positions as $value => $label): ?>
-                                <option value="<?php echo $value; ?>"><?php echo $label; ?></option>
+                            <?php foreach ($db_positions as $pos): ?>
+                                <option value="<?php echo htmlspecialchars($pos); ?>"><?php echo htmlspecialchars($pos); ?></option>
                             <?php endforeach; ?>
                         </select>
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
+                            If not listed, add it in General Settings.
+                        </div>
+                    </div>
+
+                    <div class="form-group col-3">
+                        <label for="edit_department">Department</label>
+                        <select id="edit_department" name="department">
+                            <option value="">Select Department</option>
+                            <?php foreach ($db_departments as $dept): ?>
+                                <option value="<?php echo htmlspecialchars($dept); ?>"><?php echo htmlspecialchars($dept); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
+                            If not listed, add it in General Settings.
+                        </div>
                     </div>
 
                     <div class="form-group col-3">
                         <label for="edit_location">Location</label>
-                        <input type="text" id="edit_location" name="location"
-                            oninput="this.value = this.value.toUpperCase()">
+                        <select id="edit_location" name="location">
+                            <option value="">Select Location</option>
+                            <?php foreach ($db_locations as $loc): ?>
+                                <option value="<?php echo htmlspecialchars($loc); ?>"><?php echo htmlspecialchars($loc); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div style="font-size: 11px; color: red; margin-top: 4px; font-style: italic;">
+                            If not listed, add it in General Settings.
+                        </div>
                     </div>
 
                     <div class="form-group col-3">
@@ -1058,6 +1088,11 @@ $common_positions = [
         if (fullNameInput) fullNameInput.value = '';
         const prev = document.getElementById('add_employee_image_preview');
         if (prev) prev.innerHTML = '';
+        // Reset department and location dropdowns
+        const deptSelect = document.getElementById('add_department');
+        if (deptSelect) deptSelect.value = '';
+        const locSelect = document.getElementById('add_location');
+        if (locSelect) locSelect.value = '';
     }
 
     function closeAddEmployeeModal(skipConfirm = false) {
@@ -1218,6 +1253,33 @@ $common_positions = [
         }
     }
 
+    // Helper function to set select value, adding temporary option for legacy values
+    function setSelectValueWithLegacy(selectEl, value) {
+        if (!selectEl) return;
+        
+        // Remove any previously added legacy option
+        const legacyOption = selectEl.querySelector('option[data-legacy="true"]');
+        if (legacyOption) legacyOption.remove();
+        
+        if (!value) {
+            selectEl.value = '';
+            return;
+        }
+        
+        // Check if value exists in options
+        const exists = [...selectEl.options].some(o => o.value === value);
+        
+        if (exists) {
+            selectEl.value = value;
+        } else {
+            // Add temporary option for legacy value
+            const opt = new Option(value, value, true, true);
+            opt.setAttribute('data-legacy', 'true');
+            selectEl.add(opt);
+            selectEl.value = value;
+        }
+    }
+
     document.querySelectorAll('.edit-employee-btn').forEach(btn => {
         btn.addEventListener('click', function() {
             const employeeData = JSON.parse(this.dataset.employee);
@@ -1230,9 +1292,16 @@ $common_positions = [
             editSuffix.value = employeeData.suffix || '';
             editEmail.value = employeeData.email;
             editContactNumber.value = employeeData.contact_number || '';
-            editDepartment.value = employeeData.department || '';
-            editPosition.value = employeeData.position || '';
-            editLocation.value = employeeData.location || '';
+            
+            // Department — handle legacy free-text values
+            setSelectValueWithLegacy(editDepartment, employeeData.department || '');
+            
+            // Position — handle legacy free-text values
+            setSelectValueWithLegacy(editPosition, employeeData.position || '');
+            
+            // Location — handle legacy free-text values
+            setSelectValueWithLegacy(editLocation, employeeData.location || '');
+            
             editStatus.value = employeeData.status || 'active';
             editDateHired.value = employeeData.date_hired || '';
             editDateSeparated.value = employeeData.date_separated || '';
