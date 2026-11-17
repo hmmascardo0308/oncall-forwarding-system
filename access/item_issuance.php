@@ -16,7 +16,7 @@ if (!isset($_SESSION['user_id'])) {
 $user_id    = $_SESSION['user_id'];
 $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Admin';
-$full_name = $_SESSION['full_name'] ?? $username;
+$full_name  = $_SESSION['full_name'] ?? $username;
 
 // Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
@@ -25,8 +25,6 @@ $user_roles = array_map('trim', explode(',', $user_type));
 $is_admin = in_array('admin', $user_roles);
 
 // Check if user has access to items issuance page
-// Allow purchase_order_maker to view and process issuance
-// Allow item_register to view and process issuance
 $can_access_issuance = $is_admin || in_array('user', $user_roles) || in_array('purchase_order_maker', $user_roles) || in_array('item_register', $user_roles);
 
 if (!$can_access_issuance) {
@@ -39,32 +37,25 @@ if (!$can_access_issuance) {
 }
 
 // Check if user can process/submit issuance (admin, user, and item_register roles only)
-// purchase_order_maker can view but NOT submit
 $can_process_issuance = $is_admin || in_array('user', $user_roles) || in_array('item_register', $user_roles);
-
-// Define allowed pages based on roles - Now using centralized $allowed_pages from access_control.php
-
-// Function to check if user has access to a specific page - Now using centralized hasAccess() function
-
-// Function to get display name for roles - Now using centralized getRoleDisplayName() function
 
 $role_display_name = getRoleDisplayName($user_roles);
 
 // Set current page for sidebar
 $current_page = basename($_SERVER['PHP_SELF']);
 
-// Fetch all active items for dropdown - include supplier_code and id
-$items_query = "SELECT id, item_code, item_name, current_stock, unit_of_measure, selling_price, supplier_code 
+// Fetch all active items for dropdown - include part_number, supplier_code and id
+$items_query = "SELECT id, item_code, item_name, current_stock, unit_of_measure, selling_price, part_number, supplier_code 
                 FROM item_masterlist 
                 WHERE status = 1 
-                ORDER BY item_name ASC, supplier_code ASC";
+                ORDER BY item_name ASC, part_number ASC";
 $items_result = mysqli_query($conn, $items_query);
 
 // Fetch customers for dropdown (using customer_code)
 $customers_query = "SELECT id, customer_code, full_name FROM customer_masterlist WHERE status = 'Active' ORDER BY full_name ASC";
 $customers_result = mysqli_query($conn, $customers_query);
 
-// Fetch trucks for dropdown (using truck_code - assuming you have truck_code field)
+// Fetch trucks for dropdown (using truck_code)
 $trucks_query = "SELECT id, truck_code, plate_number, model FROM truck_masterlist WHERE status = 'Active' ORDER BY plate_number ASC";
 $trucks_result = mysqli_query($conn, $trucks_query);
 
@@ -93,28 +84,27 @@ $success_reference = '';
 
 // Handle Issuance Submission - Only allow if user can process
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_issuance'])) {
-    // Check if user has permission to process issuance
     if (!$can_process_issuance) {
         $message = "You don't have permission to process item issuance.";
         $message_type = 'error';
     } else {
-        $reference_no = trim($_POST['reference_no'] ?? '');
-        $issuance_date = trim($_POST['issuance_date'] ?? date('Y-m-d'));
-        $issuance_type = trim($_POST['issuance_type'] ?? '');
-        $customer_code = trim($_POST['customer_code'] ?? '');
-        $truck_code = trim($_POST['truck_code'] ?? '');
-        $purpose = trim($_POST['purpose'] ?? '');
-        $remarks = trim($_POST['remarks'] ?? '');
+        $reference_no   = trim($_POST['reference_no'] ?? '');
+        $issuance_date  = trim($_POST['issuance_date'] ?? date('Y-m-d'));
+        $issuance_type  = trim($_POST['issuance_type'] ?? '');
+        $customer_code  = trim($_POST['customer_code'] ?? '');
+        $truck_code     = trim($_POST['truck_code'] ?? '');
+        $purpose        = trim($_POST['purpose'] ?? '');
+        $remarks        = trim($_POST['remarks'] ?? '');
         
-        // Get items data from POST - now includes item_code and supplier_code
+        // Get items data from POST - includes item_code and part_number
         $items = [];
         if (isset($_POST['items']) && is_array($_POST['items'])) {
             foreach ($_POST['items'] as $item) {
-                if (!empty($item['item_code']) && !empty($item['supplier_code']) && !empty($item['quantity']) && $item['quantity'] > 0) {
+                if (!empty($item['item_code']) && !empty($item['part_number']) && !empty($item['quantity']) && $item['quantity'] > 0) {
                     $items[] = [
-                        'item_code' => trim($item['item_code']),
-                        'supplier_code' => trim($item['supplier_code']),
-                        'quantity' => intval($item['quantity'])
+                        'item_code'   => trim($item['item_code']),
+                        'part_number' => trim($item['part_number']),
+                        'quantity'    => intval($item['quantity'])
                     ];
                 }
             }
@@ -139,28 +129,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_issuance'])) {
             $errors[] = "Please add at least one item to issue.";
         }
         
-        // Check stock availability and get selling prices - now using both item_code and supplier_code
+        // Check stock availability - now using item_code and part_number
         $items_data = [];
         if (empty($errors)) {
             foreach ($items as $item) {
-                $stock_query = "SELECT id, item_code, item_name, current_stock, selling_price, supplier_code 
+                $stock_query = "SELECT id, item_code, item_name, current_stock, selling_price, part_number, supplier_code 
                                FROM item_masterlist 
                                WHERE item_code = '" . mysqli_real_escape_string($conn, $item['item_code']) . "' 
-                               AND supplier_code = '" . mysqli_real_escape_string($conn, $item['supplier_code']) . "'
+                               AND part_number = '" . mysqli_real_escape_string($conn, $item['part_number']) . "'
                                AND status = 1";
                 $stock_result = mysqli_query($conn, $stock_query);
                 $stock_data = mysqli_fetch_assoc($stock_result);
                 
                 if (!$stock_data) {
-                    $errors[] = "Item " . htmlspecialchars($item['item_code']) . " with supplier " . htmlspecialchars($item['supplier_code']) . " not found.";
+                    $errors[] = "Item " . htmlspecialchars($item['item_code']) . " with part number " . htmlspecialchars($item['part_number']) . " not found.";
                 } elseif ($stock_data['current_stock'] < $item['quantity']) {
-                    $errors[] = "Insufficient stock for " . htmlspecialchars($stock_data['item_name']) . " (" . htmlspecialchars($stock_data['supplier_code']) . "). Available: " . $stock_data['current_stock'];
+                    $errors[] = "Insufficient stock for " . htmlspecialchars($stock_data['item_name']) . " (" . htmlspecialchars($stock_data['part_number']) . "). Available: " . $stock_data['current_stock'];
                 } else {
                     $items_data[] = [
-                        'item_code' => $item['item_code'],
-                        'supplier_code' => $item['supplier_code'],
-                        'quantity' => $item['quantity'],
-                        'item_name' => $stock_data['item_name']
+                        'item_code'     => $item['item_code'],
+                        'part_number'   => $item['part_number'],
+                        'item_name'     => $stock_data['item_name'],
+                        'supplier_code' => $stock_data['supplier_code'],
+                        'quantity'      => $item['quantity']
                     ];
                 }
             }
@@ -178,37 +169,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_issuance'])) {
                 $created_at = date('Y-m-d H:i:s');
                 
                 // Insert each item as a separate row in item_issuance table
+                // NOTE: includes item_name and supplier_code per the DB schema
                 foreach ($items_data as $item) {
                     $insert_issuance = "INSERT INTO item_issuance (
-                        reference_no, item_code, supplier_code, quantity, customer_code, truck_code, 
-                        issuance_date, issuance_type, purpose, remarks, status, 
-                        created_by, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)";
+                        reference_no, item_code, part_number, item_name, supplier_code, quantity, 
+                        customer_code, truck_code, issuance_date, issuance_type, purpose, remarks, 
+                        status, created_by, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)";
                     
                     $stmt = mysqli_prepare($conn, $insert_issuance);
-                    mysqli_stmt_bind_param($stmt, "sssissssssss", 
-                        $reference_no, 
+                    // Types: s=string, i=integer
+                    // ref(s) item_code(s) part_number(s) item_name(s) supplier_code(s) qty(i)
+                    // customer(s) truck(s) date(s) type(s) purpose(s) remarks(s) created_by(s) created_at(s)
+                    mysqli_stmt_bind_param($stmt, "sssssissssssss", 
+                        $reference_no,
                         $item['item_code'],
+                        $item['part_number'],
+                        $item['item_name'],
                         $item['supplier_code'],
-                        $item['quantity'], 
-                        $customer_code, 
-                        $truck_code, 
-                        $issuance_date, 
-                        $issuance_type, 
-                        $purpose, 
-                        $remarks, 
-                        $created_by, 
+                        $item['quantity'],
+                        $customer_code,
+                        $truck_code,
+                        $issuance_date,
+                        $issuance_type,
+                        $purpose,
+                        $remarks,
+                        $created_by,
                         $created_at
                     );
                     mysqli_stmt_execute($stmt);
                     mysqli_stmt_close($stmt);
                     
-                    // Update stock quantity in item_masterlist using both item_code and supplier_code
+                    // Update stock quantity in item_masterlist using both item_code and part_number
                     $update_stock = "UPDATE item_masterlist 
                                      SET current_stock = current_stock - ? 
-                                     WHERE item_code = ? AND supplier_code = ?";
+                                     WHERE item_code = ? AND part_number = ?";
                     $stmt = mysqli_prepare($conn, $update_stock);
-                    mysqli_stmt_bind_param($stmt, "iss", $item['quantity'], $item['item_code'], $item['supplier_code']);
+                    mysqli_stmt_bind_param($stmt, "iss", $item['quantity'], $item['item_code'], $item['part_number']);
                     mysqli_stmt_execute($stmt);
                     mysqli_stmt_close($stmt);
                 }
@@ -279,12 +276,8 @@ $issuances_result = mysqli_query($conn, $issuances_query);
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
-    <!-- <link rel="stylesheet" href="css/items.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/items_issue.css?v=<?= time(); ?>">
-
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
-    
- 
 </head>
 <body>
 
@@ -425,7 +418,7 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                             <table class="items-table" id="itemsTable">
                                 <thead>
                                     <tr>
-                                        <th style="min-width: 280px;">Item (Code - Name - Supplier)</th>
+                                        <th style="min-width: 280px;">Item (Code - Name - Part Number)</th>
                                         <th style="width: 120px;">Available Stock</th>
                                         <th style="width: 120px;">Quantity</th>
                                         <th>UOM</th>
@@ -486,13 +479,11 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                             <?php while ($issuance = mysqli_fetch_assoc($issuances_result)): 
                                 // Determine recipient display
                                 if ($issuance['issuance_type'] == 'customer') {
-                                    // Get customer name from customer_code
                                     $customer_name_query = "SELECT full_name FROM customer_masterlist WHERE customer_code = '" . mysqli_real_escape_string($conn, $issuance['customer_code']) . "'";
                                     $customer_name_result = mysqli_query($conn, $customer_name_query);
                                     $customer = mysqli_fetch_assoc($customer_name_result);
                                     $recipient = !empty($customer['full_name']) ? $customer['full_name'] : $issuance['customer_code'];
                                 } elseif ($issuance['issuance_type'] == 'truck') {
-                                    // Get truck info from truck_code
                                     $truck_info_query = "SELECT plate_number FROM truck_masterlist WHERE truck_code = '" . mysqli_real_escape_string($conn, $issuance['truck_code']) . "'";
                                     $truck_info_result = mysqli_query($conn, $truck_info_query);
                                     $truck = mysqli_fetch_assoc($truck_info_result);
@@ -501,11 +492,10 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                                     $recipient = 'Internal Use';
                                 }
                                 
-                                // Get supplier info for this issuance
+                                // Get supplier name for this issuance directly from item_issuance.supplier_code
                                 $supplier_query = "SELECT DISTINCT sl.supplier_name 
                                                   FROM item_issuance ii
-                                                  LEFT JOIN item_masterlist im ON ii.item_code = im.item_code
-                                                  LEFT JOIN supplier_lists sl ON im.supplier_code = sl.supplier_code
+                                                  LEFT JOIN supplier_lists sl ON ii.supplier_code = sl.supplier_code
                                                   WHERE ii.reference_no = '" . mysqli_real_escape_string($conn, $issuance['reference_no']) . "'
                                                   AND sl.supplier_name IS NOT NULL
                                                   LIMIT 1";
@@ -554,7 +544,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
             <button id="closeDetailsModal" style="background:#f1f5f9; border:none; width:32px; height:32px; border-radius:50%; cursor:pointer;">×</button>
         </div>
         <div class="modal-body" id="detailsContent">
-            <!-- Content will be loaded via AJAX -->
             <div style="text-align: center; padding: 40px;">Loading...</div>
         </div>
         <div class="modal-footer">
@@ -566,22 +555,23 @@ $issuances_result = mysqli_query($conn, $issuances_query);
 <script>
     lucide.createIcons();
     
-    // Items data for dropdown - includes supplier_code and stock
+    // Items data for dropdown - includes part_number, supplier_code and stock
     const itemsData = <?php
         $items_array = [];
         mysqli_data_seek($items_result, 0);
         while ($item = mysqli_fetch_assoc($items_result)) {
-            // Create combined display: item_code - item_name (supplier_code)
-            $display_text = $item['item_code'] . ' - ' . $item['item_name'] . ' (' . $item['supplier_code'] . ')';
+            // Create combined display: item_code - item_name (part_number)
+            $display_text = $item['item_code'] . ' - ' . $item['item_name'] . ' (' . $item['part_number'] . ')';
             $items_array[] = [
-                'id' => $item['id'],
-                'item_code' => $item['item_code'],
-                'item_name' => $item['item_name'],
-                'supplier_code' => $item['supplier_code'],
-                'display_text' => $display_text,
-                'current_stock' => (int)$item['current_stock'],
-                'unit_of_measure' => $item['unit_of_measure'],
-                'selling_price' => $item['selling_price']
+                'id'             => $item['id'],
+                'item_code'      => $item['item_code'],
+                'item_name'      => $item['item_name'],
+                'part_number'    => $item['part_number'],
+                'supplier_code'  => $item['supplier_code'],
+                'display_text'   => $display_text,
+                'current_stock'  => (int)$item['current_stock'],
+                'unit_of_measure'=> $item['unit_of_measure'],
+                'selling_price'  => $item['selling_price']
             ];
         }
         echo json_encode($items_array);
@@ -589,7 +579,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
     
     let itemCounter = 0;
     
-    // User roles from PHP
     const userRoles = <?php echo json_encode($user_roles); ?>;
     const allowedPages = <?php echo json_encode($allowed_pages); ?>;
     const modal = document.getElementById('accessModal');
@@ -624,7 +613,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
         if (customerGroup) customerGroup.style.display = selectedType === 'customer' ? 'block' : 'none';
         if (truckGroup) truckGroup.style.display = selectedType === 'truck' ? 'block' : 'none';
         
-        // Update required attributes
         const customerSelect = document.querySelector('select[name="customer_code"]');
         const truckSelect = document.querySelector('select[name="truck_code"]');
         if (customerSelect) customerSelect.required = (selectedType === 'customer');
@@ -639,7 +627,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
     
     toggleRecipientFields();
     
-    // Escape HTML function
     function escapeHtml(text) {
         if (!text) return '';
         return text
@@ -650,7 +637,12 @@ $issuances_result = mysqli_query($conn, $issuances_query);
             .replace(/'/g, '&#39;');
     }
     
-    // Function to get stock color class
+    // NEW: Convert text to UPPERCASE safely (for the details modal only)
+    function toUpper(text) {
+        if (text === null || text === undefined) return '';
+        return String(text).toUpperCase();
+    }
+    
     function getStockColorClass(stock) {
         if (stock <= 0) return 'stock-low';
         if (stock <= 10) return 'stock-medium';
@@ -659,7 +651,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
     
     // Add item to table
     function addItemRow() {
-        // Don't allow adding items if user can't process issuance
         if (!canProcessIssuance) {
             alert('You are in view-only mode. You cannot add items.');
             return;
@@ -681,9 +672,9 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                     <option value="">Select Item</option>
                     ${itemsData.map(item => 
                         `<option value="${item.item_code}" 
-                                data-supplier-code="${escapeHtml(item.supplier_code)}"
+                                data-part-number="${escapeHtml(item.part_number)}"
                                 data-item-name="${escapeHtml(item.item_name)}" 
-                                data-supplier="${escapeHtml(item.supplier_code)}"
+                                data-supplier-code="${escapeHtml(item.supplier_code)}"
                                 data-stock="${item.current_stock}" 
                                 data-uom="${escapeHtml(item.unit_of_measure)}"
                                 data-item-id="${item.id}">
@@ -691,7 +682,7 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                         </option>`
                     ).join('')}
                 </select>
-                <input type="hidden" name="items[${rowId}][supplier_code]" class="supplier-code-input" value="">
+                <input type="hidden" name="items[${rowId}][part_number]" class="part-number-input" value="">
             </td>
             <td class="stock-display" style="text-align: center;">-</td>
             <td><input type="number" name="items[${rowId}][quantity]" class="item-quantity" min="1" value="1" style="width: 80px; text-align: center;" disabled></td>
@@ -701,28 +692,25 @@ $issuances_result = mysqli_query($conn, $issuances_query);
         
         tbody.appendChild(row);
         
-        // Add event listeners
         const select = row.querySelector('.item-select');
         const quantityInput = row.querySelector('.item-quantity');
-        const supplierHidden = row.querySelector('.supplier-code-input');
+        const partNumberHidden = row.querySelector('.part-number-input');
         
         select.addEventListener('change', function() {
             const selectedOption = this.options[this.selectedIndex];
             const stock = parseInt(selectedOption.getAttribute('data-stock')) || 0;
             const uom = selectedOption.getAttribute('data-uom');
-            const itemName = selectedOption.getAttribute('data-item-name');
-            const supplierCode = selectedOption.getAttribute('data-supplier-code');
+            const partNumber = selectedOption.getAttribute('data-part-number');
             
             const stockSpan = row.querySelector('.stock-display');
             const uomSpan = row.querySelector('.uom-display');
             
-            // Update stock display with color coding
             if (stockSpan) {
                 stockSpan.textContent = stock;
                 stockSpan.className = 'stock-display ' + getStockColorClass(stock);
             }
             if (uomSpan) uomSpan.textContent = uom || '-';
-            if (supplierHidden) supplierHidden.value = supplierCode || '';
+            if (partNumberHidden) partNumberHidden.value = partNumber || '';
             
             if (quantityInput) {
                 quantityInput.disabled = false;
@@ -730,7 +718,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                 quantityInput.value = 1;
                 quantityInput.placeholder = stock > 0 ? `Max: ${stock}` : 'No stock';
                 
-                // Update on input
                 quantityInput.oninput = function() {
                     const maxStock = parseInt(this.max) || 0;
                     const currentValue = parseInt(this.value) || 0;
@@ -747,7 +734,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
             updateSummary();
         });
         
-        // Initialize quantity input
         if (quantityInput) {
             quantityInput.addEventListener('input', function() {
                 updateSummary();
@@ -807,12 +793,11 @@ $issuances_result = mysqli_query($conn, $issuances_query);
         updateSummary();
         toggleRecipientFields();
         
-        // Clear any selected radio buttons
         const radios = document.querySelectorAll('input[name="issuance_type"]');
         radios.forEach(radio => radio.checked = false);
     }
     
-    // View issuance details
+    // View issuance details — ALL TEXT DISPLAYED IN UPPERCASE
     function viewIssuanceDetails(referenceNo) {
         const detailsModal = document.getElementById('detailsModal');
         const detailsContent = document.getElementById('detailsContent');
@@ -823,7 +808,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
         detailsModal.style.display = 'flex';
         lucide.createIcons();
         
-        // Fetch details via AJAX
         fetch(`get_issuance_details.php?reference_no=${encodeURIComponent(referenceNo)}`)
             .then(response => response.json())
             .then(data => {
@@ -833,41 +817,41 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                         data.items.forEach(item => {
                             itemsHtml += `
                                 <tr>
-                                    <td style="padding: 10px;">${escapeHtml(item.item_code)}</td>
-                                    <td style="padding: 10px;">${escapeHtml(item.item_name)}</td>
-                                    <td style="padding: 10px; text-align: center;">${escapeHtml(item.supplier_code || 'N/A')}</td>
-                                    <td style="padding: 10px; text-align: center;">${escapeHtml(item.supplier_name || 'N/A')}</td>
-                                    <td style="padding: 10px; text-align: center;">${item.quantity}</td>
-                                    <td style="padding: 10px; text-align: center;">${escapeHtml(item.unit_of_measure)}</td>
+                                    <td style="padding: 10px;">${escapeHtml(toUpper(item.item_code))}</td>
+                                    <td style="padding: 10px;">${escapeHtml(toUpper(item.item_name))}</td>
+                                    <td style="padding: 10px; text-align: center;">${escapeHtml(toUpper(item.part_number || 'N/A'))}</td>
+                                    <td style="padding: 10px; text-align: center;">${escapeHtml(toUpper(item.supplier_name || 'N/A'))}</td>
+                                    <td style="padding: 10px; text-align: center;">${escapeHtml(toUpper(item.quantity))}</td>
+                                    <td style="padding: 10px; text-align: center;">${escapeHtml(toUpper(item.unit_of_measure))}</td>
                                 </tr>
                             `;
                         });
                     } else {
-                        itemsHtml = '<tr><td colspan="6" style="text-align: center; padding: 20px;">No items found</td></tr>';
+                        itemsHtml = '<tr><td colspan="6" style="text-align: center; padding: 20px;">NO ITEMS FOUND</td></tr>';
                     }
                     
                     detailsContent.innerHTML = `
-                        <div style="margin-bottom: 20px;">
+                        <div style="margin-bottom: 20px; text-transform: uppercase;">
                             <div class="form-grid" style="grid-template-columns: repeat(2, 1fr); gap: 12px;">
-                                <div><strong>Reference No:</strong><br>${escapeHtml(data.issuance.reference_no)}</div>
-                                <div><strong>Date:</strong><br>${escapeHtml(data.issuance.issuance_date)}</div>
-                                <div><strong>Type:</strong><br>${escapeHtml(data.issuance.issuance_type)}</div>
-                                <div><strong>Recipient:</strong><br>${escapeHtml(data.issuance.recipient)}</div>
-                                <div><strong>Purpose:</strong><br>${escapeHtml(data.issuance.purpose || 'N/A')}</div>
-                                <div><strong>Status:</strong><br><span class="status-badge status-${data.issuance.status}">${escapeHtml(data.issuance.status)}</span></div>
-                                <div><strong>Created By:</strong><br>${escapeHtml(data.issuance.created_by)}</div>
-                                <div><strong>Created At:</strong><br>${escapeHtml(data.issuance.created_at)}</div>
-                                ${data.issuance.remarks ? `<div style="grid-column: span 2;"><strong>Remarks:</strong><br>${escapeHtml(data.issuance.remarks)}</div>` : ''}
+                                <div><strong>Reference No:</strong><br>${escapeHtml(toUpper(data.issuance.reference_no))}</div>
+                                <div><strong>Date:</strong><br>${escapeHtml(toUpper(data.issuance.issuance_date))}</div>
+                                <div><strong>Type:</strong><br>${escapeHtml(toUpper(data.issuance.issuance_type))}</div>
+                                <div><strong>Recipient:</strong><br>${escapeHtml(toUpper(data.issuance.recipient))}</div>
+                                <div><strong>Purpose:</strong><br>${escapeHtml(toUpper(data.issuance.purpose || 'N/A'))}</div>
+                                <div><strong>Status:</strong><br><span class="status-badge status-${data.issuance.status}">${escapeHtml(toUpper(data.issuance.status))}</span></div>
+                                <div><strong>Created By:</strong><br>${escapeHtml(toUpper(data.issuance.created_by))}</div>
+                                <div><strong>Created At:</strong><br>${escapeHtml(toUpper(data.issuance.created_at))}</div>
+                                ${data.issuance.remarks ? `<div style="grid-column: span 2;"><strong>Remarks:</strong><br>${escapeHtml(toUpper(data.issuance.remarks))}</div>` : ''}
                             </div>
                         </div>
-                        <h4 style="margin: 16px 0 12px 0;">Items Issued</h4>
-                        <div style="overflow-x: auto;">
+                        <h4 style="margin: 16px 0 12px 0; text-transform: uppercase;">Items Issued</h4>
+                        <div style="overflow-x: auto; text-transform: uppercase;">
                             <table style="width: 100%; border-collapse: collapse;">
                                 <thead>
                                     <tr style="background: var(--bg-gray);">
                                         <th style="padding: 10px; text-align: left;">Item Code</th>
                                         <th style="padding: 10px; text-align: left;">Item Name</th>
-                                        <th style="padding: 10px; text-align: center;">Supplier Code</th>
+                                        <th style="padding: 10px; text-align: center;">Part Number</th>
                                         <th style="padding: 10px; text-align: center;">Supplier Name</th>
                                         <th style="padding: 10px; text-align: center;">Quantity</th>
                                         <th style="padding: 10px; text-align: center;">UOM</th>
@@ -877,7 +861,7 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                                     ${itemsHtml}
                                     <tr style="font-weight: bold; background: var(--bg-gray);">
                                         <td colspan="4" style="text-align: right; padding: 10px;">Total Quantity:</td>
-                                        <td style="padding: 10px; text-align: center;">${data.total_quantity}</td>
+                                        <td style="padding: 10px; text-align: center;">${escapeHtml(toUpper(data.total_quantity))}</td>
                                         <td></td>
                                     </tr>
                                 </tbody>
@@ -885,13 +869,13 @@ $issuances_result = mysqli_query($conn, $issuances_query);
                         </div>
                     `;
                 } else {
-                    detailsContent.innerHTML = `<div style="text-align: center; padding: 40px; color: red;">${escapeHtml(data.message)}</div>`;
+                    detailsContent.innerHTML = `<div style="text-align: center; padding: 40px; color: red; text-transform: uppercase;">${escapeHtml(toUpper(data.message))}</div>`;
                 }
                 lucide.createIcons();
             })
             .catch(error => {
                 console.error('Error:', error);
-                detailsContent.innerHTML = `<div style="text-align: center; padding: 40px; color: red;">Error loading details. Please try again.</div>`;
+                detailsContent.innerHTML = `<div style="text-align: center; padding: 40px; color: red; text-transform: uppercase;">ERROR LOADING DETAILS. PLEASE TRY AGAIN.</div>`;
             });
     }
     
@@ -923,14 +907,12 @@ $issuances_result = mysqli_query($conn, $issuances_query);
         }
     });
     
-    // Make functions globally available
     window.viewIssuanceDetails = viewIssuanceDetails;
     window.removeItemRow = removeItemRow;
     window.resetForm = resetForm;
     window.closeModal = closeModal;
     window.addItemRow = addItemRow;
     
-    // Add animation for loader
     const style = document.createElement('style');
     style.textContent = `
         @keyframes spin {
@@ -940,7 +922,6 @@ $issuances_result = mysqli_query($conn, $issuances_query);
     `;
     document.head.appendChild(style);
     
-    // Auto-hide alert after 5 seconds
     setTimeout(() => {
         const alerts = document.querySelectorAll('.alert');
         alerts.forEach(alert => {

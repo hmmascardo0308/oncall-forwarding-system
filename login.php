@@ -552,9 +552,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         <div id="loginPendingPopup" class="login-pending-popup" style="display: block;">
             <div class="login-pending-content">
                 <span class="warning-icon">🚫</span>
-                <h3>Access Denied!</h3>
+                <h3>Pending Request!</h3>
                 <p><?= $_SESSION['pending_reset_error']; ?></p>
-                <button class="close-pending-btn" onclick="closeLoginPendingPopup()">OK, Got It</button>
+                <button class="close-pending-btn" onclick="closeLoginPendingPopup()">Close</button>
             </div>
         </div>
         <?php unset($_SESSION['pending_reset_error']); ?>

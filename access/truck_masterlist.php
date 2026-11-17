@@ -118,8 +118,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_truck'])) {
         // Apply uppercase transformation to text fields
         $fields = uppercaseFields($fields);
 
-        // Set current_mileage to NULL if empty
-        $fields['current_mileage'] = !empty($fields['current_mileage']) ? $fields['current_mileage'] : null;
+        // Set optional numeric/date fields to NULL if empty
+        $fields['current_mileage']       = !empty($fields['current_mileage'])       ? $fields['current_mileage']       : null;
+        $fields['last_maintenance_date'] = !empty($fields['last_maintenance_date']) ? $fields['last_maintenance_date'] : null;
+        $fields['footer']                = !empty($fields['footer'])                ? $fields['footer']                : null;
+        $fields['year_manufactured']     = !empty($fields['year_manufactured'])     ? $fields['year_manufactured']     : null;
+        $fields['wheel_count']           = !empty($fields['wheel_count'])           ? $fields['wheel_count']           : null;
+        $fields['vehicle_weight']        = !empty($fields['vehicle_weight'])        ? $fields['vehicle_weight']        : null;
+        $fields['payload_capacity_kg']   = !empty($fields['payload_capacity_kg'])   ? $fields['payload_capacity_kg']   : null;
+        $fields['payload_capacity_cbm']  = !empty($fields['payload_capacity_cbm'])  ? $fields['payload_capacity_cbm']  : null;
+        $fields['cargo_length_m']        = !empty($fields['cargo_length_m'])        ? $fields['cargo_length_m']        : null;
+        $fields['cargo_width_m']         = !empty($fields['cargo_width_m'])         ? $fields['cargo_width_m']         : null;
+        $fields['cargo_height_m']        = !empty($fields['cargo_height_m'])        ? $fields['cargo_height_m']        : null;
 
         // Required fields
         $required = ['truck_code', 'plate_number', 'brand', 'model'];
@@ -150,45 +160,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_truck'])) {
                 $created_at = date('Y-m-d H:i:s');
 
                 $insert_query = "
-    INSERT INTO truck_masterlist (
-        truck_code, plate_number, vin, brand, model, year_manufactured,
-        truck_type, body_type, axle_configuration, wheel_count, vehicle_weight,
-        payload_capacity_kg, payload_capacity_cbm, cargo_length_m, cargo_width_m, cargo_height_m,
-        footer, fuel_type, status, current_mileage, last_maintenance_date,
-        parking_place, notes, created_at, created_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-";
+                    INSERT INTO truck_masterlist (
+                        truck_code, plate_number, vin, brand, model, year_manufactured,
+                        truck_type, body_type, axle_configuration, wheel_count, vehicle_weight,
+                        payload_capacity_kg, payload_capacity_cbm, cargo_length_m, cargo_width_m, cargo_height_m,
+                        footer, fuel_type, status, current_mileage, last_maintenance_date,
+                        parking_place, notes, created_at, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ";
 
-$stmt = mysqli_prepare($conn, $insert_query);
-mysqli_stmt_bind_param(
-    $stmt, 
-    "sssssissssidddddsssssssss",
-    $fields['truck_code'],
-    $fields['plate_number'],
-    $fields['vin'],
-    $fields['brand'],
-    $fields['model'],
-    $fields['year_manufactured'],
-    $fields['truck_type'],
-    $fields['body_type'],
-    $fields['axle_configuration'],
-    $fields['wheel_count'],
-    $fields['vehicle_weight'],
-    $fields['payload_capacity_kg'],
-    $fields['payload_capacity_cbm'],
-    $fields['cargo_length_m'],
-    $fields['cargo_width_m'],
-    $fields['cargo_height_m'],
-    $fields['footer'],
-    $fields['fuel_type'],
-    $fields['status'],
-    $fields['current_mileage'],
-    $fields['last_maintenance_date'],
-    $fields['parking_place'],
-    $fields['notes'],
-    $created_at,
-    $created_by
-);
+                $stmt = mysqli_prepare($conn, $insert_query);
+                // Types: s=string, i=integer, d=double
+                // truck_code(s), plate_number(s), vin(s), brand(s), model(s), year_manufactured(i),
+                // truck_type(s), body_type(s), axle_configuration(s), wheel_count(i), vehicle_weight(d),
+                // payload_capacity_kg(d), payload_capacity_cbm(d), cargo_length_m(d), cargo_width_m(d), cargo_height_m(d),
+                // footer(s), fuel_type(s), status(s), current_mileage(d), last_maintenance_date(s),
+                // parking_place(s), notes(s), created_at(s), created_by(s)
+                mysqli_stmt_bind_param(
+                    $stmt, 
+                    "sssssissssidddddsssdsssss",
+                    $fields['truck_code'],
+                    $fields['plate_number'],
+                    $fields['vin'],
+                    $fields['brand'],
+                    $fields['model'],
+                    $fields['year_manufactured'],
+                    $fields['truck_type'],
+                    $fields['body_type'],
+                    $fields['axle_configuration'],
+                    $fields['wheel_count'],
+                    $fields['vehicle_weight'],
+                    $fields['payload_capacity_kg'],
+                    $fields['payload_capacity_cbm'],
+                    $fields['cargo_length_m'],
+                    $fields['cargo_width_m'],
+                    $fields['cargo_height_m'],
+                    $fields['footer'],
+                    $fields['fuel_type'],
+                    $fields['status'],
+                    $fields['current_mileage'],
+                    $fields['last_maintenance_date'],
+                    $fields['parking_place'],
+                    $fields['notes'],
+                    $created_at,
+                    $created_by
+                );
 
                 if (mysqli_stmt_execute($stmt)) {
                     $message = "Truck <strong>" . htmlspecialchars($fields['plate_number']) . "</strong> registered successfully!";
@@ -250,8 +266,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_truck'])) {
         // Apply uppercase transformation to text fields
         $fields = uppercaseFields($fields);
 
-        // Set current_mileage to NULL if empty
-        $fields['current_mileage'] = !empty($fields['current_mileage']) ? $fields['current_mileage'] : null;
+        // Set optional numeric/date fields to NULL if empty
+        $fields['current_mileage']       = !empty($fields['current_mileage'])       ? $fields['current_mileage']       : null;
+        $fields['last_maintenance_date'] = !empty($fields['last_maintenance_date']) ? $fields['last_maintenance_date'] : null;
+        $fields['footer']                = !empty($fields['footer'])                ? $fields['footer']                : null;
+        $fields['year_manufactured']     = !empty($fields['year_manufactured'])     ? $fields['year_manufactured']     : null;
+        $fields['wheel_count']           = !empty($fields['wheel_count'])           ? $fields['wheel_count']           : null;
+        $fields['vehicle_weight']        = !empty($fields['vehicle_weight'])        ? $fields['vehicle_weight']        : null;
+        $fields['payload_capacity_kg']   = !empty($fields['payload_capacity_kg'])   ? $fields['payload_capacity_kg']   : null;
+        $fields['payload_capacity_cbm']  = !empty($fields['payload_capacity_cbm'])  ? $fields['payload_capacity_cbm']  : null;
+        $fields['cargo_length_m']        = !empty($fields['cargo_length_m'])        ? $fields['cargo_length_m']        : null;
+        $fields['cargo_width_m']         = !empty($fields['cargo_width_m'])         ? $fields['cargo_width_m']         : null;
+        $fields['cargo_height_m']        = !empty($fields['cargo_height_m'])        ? $fields['cargo_height_m']        : null;
 
         // Required fields
         $required = ['plate_number', 'brand', 'model'];
@@ -279,8 +305,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_truck'])) {
             ";
 
             $stmt = mysqli_prepare($conn, $update_query);
+            // Types: plate_number(s), vin(s), brand(s), model(s), year_manufactured(i),
+            // truck_type(s), body_type(s), axle_configuration(s), wheel_count(i),
+            // vehicle_weight(d), payload_capacity_kg(d), payload_capacity_cbm(d),
+            // cargo_length_m(d), cargo_width_m(d), cargo_height_m(d),
+            // footer(s), fuel_type(s), status(s), current_mileage(d),
+            // last_maintenance_date(s), parking_place(s), notes(s), truck_id(i)
             mysqli_stmt_bind_param(
-                $stmt, "ssssissssidddddsssssssi",
+                $stmt, "ssssissssidddddsssdsssi",
                 $fields['plate_number'],
                 $fields['vin'],
                 $fields['brand'],
@@ -522,7 +554,7 @@ $result = mysqli_query($conn, $query);
     <div class="modal">
         <div class="modal-header">
             <h2 style="margin:0; font-size:20px; font-weight:700;">Register New Truck</h2>
-            <button id="closeModal" style="background:#f1f5f9;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;">×</button>
+            <button id="closeModal" style="background:#f1f5f9;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;">x</button>
         </div>
 
         <form method="POST">
@@ -573,6 +605,9 @@ $result = mysqli_query($conn, $query);
                             <option value="EXTRA HEAVY DUTY">Extra Heavy Duty</option>
                             <option value="PRIME MOVER">Prime Mover</option>
                             <option value="WHEELER">Wheeler</option>
+                            <option value="PICK-UP">Pick-up</option>
+                            <option value="L300">L300</option>
+                            <option value="MOTOR">Motor</option>
                         </select>
                     </div>
 
@@ -586,6 +621,7 @@ $result = mysqli_query($conn, $query);
                             <option value="REFRIGERATED">Refrigerated</option>
                             <option value="CONTAINER">Container</option>
                             <option value="ALUMINUM VAN">Aluminum Van</option>
+                            
                         </select>
                     </div>
 
@@ -593,14 +629,16 @@ $result = mysqli_query($conn, $query);
                         <label>Footer</label>
                         <select name="footer">
                             <option value="">—</option>
-                            <option value="20">20</option>
-                            <option value="40">40</option>
+                            <option value="20 Footer">20 Footer</option>
+                            <option value="40 Footer">40 Footer</option>
+                            <option value="2 x 20 Footer ">2 x 20 Footer</option>
+
                         </select>
                     </div>
 
                     <div class="form-group col-2">
                         <label>Axle Config</label>
-                        <input type="text" name="axle_configuration" placeholder="4×2 / 6×2 / 6×4 ...">
+                        <input type="text" name="axle_configuration" placeholder="4x2 / 6x2 / 6x4 ...">
                     </div>
 
                     <div class="form-group col-2">
@@ -613,30 +651,30 @@ $result = mysqli_query($conn, $query);
                         <input type="number" step="0.01" name="vehicle_weight" placeholder="Tare weight">
                     </div>
 
-                    <div class="form-section"><i data-lucide="package"></i> Cargo Capacity</div>
+                    <div class="form-section"><i data-lucide="package"></i> Cargo Capacity (optional)</div>
 
                     <div class="form-group col-2">
-                        <label>Payload (kg)</label>
+                        <label>Payload (kg) (optional)</label>
                         <input type="number" step="0.01" name="payload_capacity_kg" placeholder="Max load kg">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Payload (cbm)</label>
+                        <label>Payload (cbm) (optional)</label>
                         <input type="number" step="0.01" name="payload_capacity_cbm" placeholder="Volume">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Cargo Length (m)</label>
+                        <label>Cargo Length (m) (optional)</label>
                         <input type="number" step="0.01" name="cargo_length_m">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Width (m)</label>
+                        <label>Width (m) (optional)</label>
                         <input type="number" step="0.01" name="cargo_width_m">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Height (m)</label>
+                        <label>Height (m) (optional)</label>
                         <input type="number" step="0.01" name="cargo_height_m">
                     </div>
 
@@ -652,15 +690,15 @@ $result = mysqli_query($conn, $query);
                         </select>
                     </div>
 
-                    <div class="form-section"><i data-lucide="wrench"></i> Maintenance & Location</div>
+                    <div class="form-section"><i data-lucide="wrench"></i> Maintenance & Location (optional)</div>
 
                     <div class="form-group col-2">
                         <label>Current Mileage (km)</label>
-                        <input type="number" step="0.1" name="current_mileage" placeholder="Optional">
+                        <input type="number" step="0.1" name="current_mileage">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Last Maintenance</label>
+                        <label>Last Maintenance (optional)</label>
                         <input type="date" name="last_maintenance_date">
                     </div>
 
@@ -700,7 +738,7 @@ $result = mysqli_query($conn, $query);
     <div class="modal">
         <div class="modal-header">
             <h2 style="margin:0; font-size:20px; font-weight:700;">Edit Truck</h2>
-            <button id="closeEditModal" style="background:#f1f5f9;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;">×</button>
+            <button id="closeEditModal" style="background:#f1f5f9;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;">x</button>
         </div>
 
         <form method="POST" id="editForm">
@@ -752,6 +790,9 @@ $result = mysqli_query($conn, $query);
                             <option value="EXTRA HEAVY DUTY">Extra Heavy Duty</option>
                             <option value="PRIME MOVER">Prime Mover</option>
                             <option value="WHEELER">Wheeler</option>
+                            <option value="PICK-UP">Pick-up</option>
+                            <option value="L300">L300</option>
+                            <option value="MOTOR">Motor</option>
                         </select>
                     </div>
 
@@ -765,6 +806,11 @@ $result = mysqli_query($conn, $query);
                             <option value="REFRIGERATED">Refrigerated</option>
                             <option value="CONTAINER">Container</option>
                             <option value="ALUMINUM VAN">Aluminum Van</option>
+                            
+
+
+
+
                         </select>
                     </div>
 
@@ -772,14 +818,16 @@ $result = mysqli_query($conn, $query);
                         <label>Footer</label>
                         <select name="footer" id="edit_footer">
                             <option value="">—</option>
-                            <option value="20">20</option>
-                            <option value="40">40</option>
+                            <option value="20 Footer">20 Footer</option>
+                            <option value="40 Footer">40 Footer</option>
+                            <option value="2 x 20 Footer ">2 x 20 Footer</option>
+
                         </select>
                     </div>
 
                     <div class="form-group col-2">
                         <label>Axle Config</label>
-                        <input type="text" name="axle_configuration" id="edit_axle_configuration" placeholder="4×2 / 6×2 / 6×4 ...">
+                        <input type="text" name="axle_configuration" id="edit_axle_configuration" placeholder="4x2 / 6x2 / 6x4 ...">
                     </div>
 
                     <div class="form-group col-2">
@@ -792,7 +840,7 @@ $result = mysqli_query($conn, $query);
                         <input type="number" step="0.01" name="vehicle_weight" id="edit_vehicle_weight" placeholder="Tare weight">
                     </div>
 
-                    <div class="form-section"><i data-lucide="package"></i> Cargo Capacity</div>
+                    <div class="form-section"><i data-lucide="package"></i> Cargo Capacity (optional)</div>
 
                     <div class="form-group col-2">
                         <label>Payload (kg)</label>
@@ -831,15 +879,15 @@ $result = mysqli_query($conn, $query);
                         </select>
                     </div>
 
-                    <div class="form-section"><i data-lucide="wrench"></i> Maintenance & Location</div>
+                    <div class="form-section"><i data-lucide="wrench"></i> Maintenance & Location (optional)</div>
 
                     <div class="form-group col-2">
                         <label>Current Mileage (km)</label>
-                        <input type="number" step="0.1" name="current_mileage" id="edit_current_mileage" placeholder="Optional">
+                        <input type="number" step="0.1" name="current_mileage" id="edit_current_mileage">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Last Maintenance</label>
+                        <label>Last Maintenance (optional)</label>
                         <input type="date" name="last_maintenance_date" id="edit_last_maintenance_date">
                     </div>
 

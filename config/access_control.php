@@ -33,11 +33,15 @@ $allowed_pages = [
         'employee_list.php',
         'customer_ledger.php',
         'customer_list.php',
-    'purchase_order_list_all.php',
-    'service_invoice_list_all.php',
-'sales_order_list_all.php',
-'vendor_list.php',
-'vendor_ledger.php'
+        'purchase_order_list_all.php',
+        'service_invoice_list_all.php',
+        'sales_order_list_all.php',
+        'vendor_list.php',
+        'vendor_ledger.php',
+        'purchase_order_fuel.php',
+        'fuel_transaction.php',
+        'po_approval.php',
+        'item_issuance_approval.php'
     ],
 
     'user' => [
@@ -51,7 +55,9 @@ $allowed_pages = [
         'customer_pricing.php', 
         'company_profile.php', 
         'purchase_orders_list.php', 
-        'purchase_orders_view.php'
+        'purchase_orders_view.php',
+        'purchase_order_fuel.php',
+        'fuel_transaction.php'
     ],
 
     'purchase_order_maker' => [
@@ -68,6 +74,8 @@ $allowed_pages = [
         'reports.php', 
         // 'aged_payables.php', 
         'vendor_list.php',
+        'purchase_order_fuel.php',
+        'fuel_transaction.php'
     ],
 
     'sales_order_maker' => [
@@ -102,11 +110,6 @@ $allowed_pages = [
         'service_invoice_list_all.php',
         'reports.php', 
         'aged_receivables.php', 
-
-
-
-
-
     ],
 
     'customer_pricer' => [
@@ -117,9 +120,6 @@ $allowed_pages = [
         'customer_ledger.php',
         'customer_list.php',
         'reports.php', 
-
-
-
     ],
 
     'supplier_register' => [
@@ -128,8 +128,6 @@ $allowed_pages = [
         'vendor_list.php',
         'vendor_ledger.php',
         'reports.php', 
-
-
     ],
 
     'item_register' => [
@@ -137,21 +135,18 @@ $allowed_pages = [
         'item_issuance.php',
         'company_profile.php',
         'reports.php', 
-
     ],
 
     'truck_register' => [
         'company_profile.php',
         'truck_masterlist.php', 
         'reports.php', 
-
     ],
 
     'prime_mover_register' => [
         'company_profile.php',
         'prime_movers.php', 
         'reports.php', 
-
     ],
 
     'customer_register' => [
@@ -160,8 +155,6 @@ $allowed_pages = [
         'customer_ledger.php',
         'customer_list.php',
         'reports.php', 
-
-
     ],
 ];
 

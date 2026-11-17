@@ -3,7 +3,6 @@ session_start();
 
 require_once __DIR__ . '/../config/config.php';
 
-
 header('Content-Type: application/json');
 
 if (!isset($_SESSION['user_id'])) {
@@ -43,17 +42,21 @@ if ($issuance['issuance_type'] == 'customer' && !empty($issuance['customer_code'
     $recipient = $truck ? $truck['plate_number'] : $issuance['truck_code'];
 }
 
-// Get all items for this issuance with supplier information
-// Connect: item_issuance.item_code -> item_masterlist.item_code -> item_masterlist.supplier_code -> supplier_lists.supplier_code
+// Get all items for this issuance with supplier information.
+// Since item_issuance now stores item_name, part_number, and supplier_code directly,
+// we no longer need to join item_masterlist for those fields.
+// Connect: item_issuance.supplier_code -> supplier_lists.supplier_code (for supplier_name)
+// Fallback: if unit_of_measure is needed, we can still pull it from item_masterlist.
 $items_query = "SELECT 
                     ii.*, 
-                    im.item_name, 
                     im.unit_of_measure,
-                    im.supplier_code,
                     sl.supplier_name
                 FROM item_issuance ii
-                LEFT JOIN item_masterlist im ON ii.item_code = im.item_code
-                LEFT JOIN supplier_lists sl ON im.supplier_code = sl.supplier_code
+                LEFT JOIN item_masterlist im 
+                    ON ii.item_code = im.item_code 
+                    AND ii.part_number = im.part_number
+                LEFT JOIN supplier_lists sl 
+                    ON ii.supplier_code = sl.supplier_code
                 WHERE ii.reference_no = '$reference_no'
                 ORDER BY ii.id ASC";
 $items_result = mysqli_query($conn, $items_query);
@@ -63,12 +66,13 @@ $total_quantity = 0;
 
 while ($item = mysqli_fetch_assoc($items_result)) {
     $items[] = [
-        'item_code' => $item['item_code'],
-        'item_name' => $item['item_name'] ?? 'N/A',
-        'quantity' => intval($item['quantity']),
+        'item_code'       => $item['item_code'],
+        'item_name'       => $item['item_name'] ?? 'N/A',
+        'part_number'     => $item['part_number'] ?? 'N/A',
+        'quantity'        => intval($item['quantity']),
         'unit_of_measure' => $item['unit_of_measure'] ?? 'pcs',
-        'supplier_code' => $item['supplier_code'] ?? 'N/A',
-        'supplier_name' => $item['supplier_name'] ?? 'N/A'
+        'supplier_code'   => $item['supplier_code'] ?? 'N/A',
+        'supplier_name'   => $item['supplier_name'] ?? 'N/A'
     ];
     $total_quantity += intval($item['quantity']);
 }
@@ -76,15 +80,15 @@ while ($item = mysqli_fetch_assoc($items_result)) {
 echo json_encode([
     'success' => true,
     'issuance' => [
-        'reference_no' => $issuance['reference_no'],
+        'reference_no'  => $issuance['reference_no'],
         'issuance_date' => date('M d, Y', strtotime($issuance['issuance_date'])),
         'issuance_type' => ucfirst($issuance['issuance_type']),
-        'recipient' => $recipient,
-        'purpose' => $issuance['purpose'],
-        'remarks' => $issuance['remarks'],
-        'status' => $issuance['status'],
-        'created_by' => $issuance['created_by'],
-        'created_at' => date('M d, Y h:i A', strtotime($issuance['created_at']))
+        'recipient'     => $recipient,
+        'purpose'       => $issuance['purpose'],
+        'remarks'       => $issuance['remarks'],
+        'status'        => $issuance['status'],
+        'created_by'    => $issuance['created_by'],
+        'created_at'    => date('M d, Y h:i A', strtotime($issuance['created_at']))
     ],
     'items' => $items,
     'total_quantity' => $total_quantity

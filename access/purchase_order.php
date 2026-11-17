@@ -1,7 +1,8 @@
 <?php
+// purchase_order.php
 session_start();
 require_once __DIR__ . '/../config/config.php';
-require_once __DIR__ . '/../config/access_control.php'; // Include centralized access control
+require_once __DIR__ . '/../config/access_control.php';
 
 // ─── AJAX Endpoints ───────────────────────────────────────────────────────────
 if (isset($_GET['action'])) {
@@ -15,47 +16,41 @@ if (isset($_GET['action'])) {
         exit;
     }
 
-    // ─── Get ALL Items (regardless of supplier) ──────────────────────────────
     if ($_GET['action'] === 'get_all_items') {
-        $stmt = $conn->query("SELECT item_code, item_name, unit_of_measure, selling_price, purchase_price, part_number FROM oncall_forwarding.item_masterlist ORDER BY item_name");
+        $stmt = $conn->query("SELECT item_code, category, item_name, unit_of_measure, selling_price, purchase_price, part_number FROM oncall_forwarding.item_masterlist where category != 'VEHICLE FUEL' ORDER BY item_name");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
     }
-    
-    // ─── Get Trucks for dropdown (includes truck_type and plate_number) ────────
+
     if ($_GET['action'] === 'get_trucks') {
         $stmt = $conn->query("SELECT truck_code, brand, model, truck_type, plate_number FROM oncall_forwarding.truck_masterlist ORDER BY truck_code");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
     }
-    
-    // ─── Get Trailers for dropdown ─────────────────────────────────────────────
+
     if ($_GET['action'] === 'get_trailers') {
-        $stmt = $conn->query("SELECT trailer_code, manufacturer as brand, model FROM oncall_forwarding.trailer_masterlist ORDER BY trailer_code");
+        $stmt = $conn->query("SELECT trailer_code, plate_number, trailer_type, manufacturer, model FROM oncall_forwarding.trailer_masterlist ORDER BY trailer_code");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
     }
-    
-    // ─── Get Customers for dropdown ────────────────────────────────────────────
+
     if ($_GET['action'] === 'get_customers') {
         $stmt = $conn->query("SELECT customer_code, full_name FROM oncall_forwarding.customer_masterlist ORDER BY full_name");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
     }
-    
-    // ─── Get Employees for dropdown ────────────────────────────────────────────
+
     if ($_GET['action'] === 'get_employees') {
         $stmt = $conn->query("SELECT employee_code, full_name FROM oncall_forwarding.employee_list ORDER BY full_name");
         $rows = $stmt->fetch_all(MYSQLI_ASSOC);
         echo json_encode($rows);
         exit;
     }
-    
-    // ─── Get Company Address ───────────────────────────────────────────────────
+
     if ($_GET['action'] === 'get_company_address') {
         $stmt = $conn->query("SELECT full_address FROM oncall_forwarding.company_profile LIMIT 1");
         $row = $stmt->fetch_assoc();
@@ -63,16 +58,13 @@ if (isset($_GET['action'])) {
         echo json_encode(['full_address' => $address]);
         exit;
     }
-    
-    // ─── Get Next PO Number Helper ───────────────────────────────────────────
+
     function getNextPONumber($conn) {
         $currentYear = date('Y');
-        
         $sql = "SELECT po_number FROM purchase_order 
                 WHERE po_number LIKE 'PO-" . $currentYear . "-%' 
                 ORDER BY po_number DESC LIMIT 1";
         $result = $conn->query($sql);
-        
         if ($result && $row = $result->fetch_assoc()) {
             $lastPONumber = $row['po_number'];
             $parts = explode('-', $lastPONumber);
@@ -81,24 +73,22 @@ if (isset($_GET['action'])) {
         } else {
             $nextSeq = 1;
         }
-        
         $formattedSeq = str_pad($nextSeq, 5, '0', STR_PAD_LEFT);
         return 'PO-' . $currentYear . '-' . $formattedSeq;
     }
-    
-    // ─── Save Purchase Order (Submit for Approval) ─────────────────────────────
+
     if ($_GET['action'] === 'save_po' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $input = json_decode(file_get_contents('php://input'), true);
-        
+
         if (empty($input['supplier_code']) || empty($input['purchase_type']) || empty($input['items'])) {
             echo json_encode(['success' => false, 'message' => 'Missing required fields']);
             exit;
         }
-        
+
         date_default_timezone_set('Asia/Manila');
-        
+
         $po_number = getNextPONumber($conn);
-        
+
         $supplier_code = $conn->real_escape_string($input['supplier_code']);
         $supplier_name = $conn->real_escape_string($input['supplier_name']);
         $purchase_type = $conn->real_escape_string($input['purchase_type']);
@@ -111,80 +101,57 @@ if (isset($_GET['action'])) {
         $warranty = $conn->real_escape_string($input['warranty']);
         $remarks = $conn->real_escape_string($input['remarks']);
         $freight = floatval($input['freight']);
-        
-        // These are the values sent from the frontend after all calculations
-        $subtotal = floatval($input['subtotal']);           // Subtotal (excl. tax), before PO discount
-        $total_vat = floatval($input['total_vat']);         // Adjusted VAT (after PO discount)
-        $total_amount = floatval($input['total_amount']);   // Adjusted Grand Total (after PO discount)
+        $labor = isset($input['labor']) ? floatval($input['labor']) : 0;
+
+        $subtotal = floatval($input['subtotal']);
+        $total_vat = floatval($input['total_vat']);
+        $total_amount = floatval($input['total_amount']);
         $with_vat = isset($input['with_vat']) ? intval($input['with_vat']) : 1;
-        
-        // Discount fields
+
         $discount_percent = isset($input['discount_percent']) ? floatval($input['discount_percent']) : 0;
         $discount_amount = isset($input['discount_amount']) ? floatval($input['discount_amount']) : 0;
         $item_discount_amount = isset($input['item_discount_amount']) ? floatval($input['item_discount_amount']) : 0;
-        
-        // ── Withholding Tax (server-side recomputation) ────────────────────────
-        // Withholding Tax base is the Subtotal (excl. tax) after PO discount.
+
         $withholding_tax_percent = isset($input['withholding_tax_percent']) ? floatval($input['withholding_tax_percent']) : 0;
-        
+
         if ($withholding_tax_percent > 0) {
-            // Withholding base = Subtotal (excl. tax) − PO discount
             $withholding_base = $subtotal - $discount_amount;
             if ($withholding_base < 0) $withholding_base = 0;
-            
             $withholding_tax_amount = $withholding_base * ($withholding_tax_percent / 100);
-            // Net Amount Due = Total PO Amount (VAT-incl.) − Withholding Tax
             $net_amount_due = $total_amount - $withholding_tax_amount;
         } else {
             $withholding_tax_amount = 0;
             $net_amount_due = $total_amount;
         }
-        
+
         $created_by = $conn->real_escape_string($_SESSION['username'] ?? 'system');
-        $requested_by = $conn->real_escape_string($input['requested_by'] ?? '');
         $created_at = date('Y-m-d H:i:s');
         $status = 'Created';
-        
-        // Vehicle fields based on purchase type
+
         $vehicle_code = !empty($input['vehicle_code']) ? $conn->real_escape_string($input['vehicle_code']) : null;
         $vehicle_brand = !empty($input['vehicle_brand']) ? $conn->real_escape_string($input['vehicle_brand']) : null;
         $vehicle_model = !empty($input['vehicle_model']) ? $conn->real_escape_string($input['vehicle_model']) : null;
-        
-        // Store vehicle type and code separately for reference
+
+        // Always initialize these variables
         $truck_code = null;
         $trailer_code = null;
         $prime_mover_code = null;
-        $customer_code = null;
-        
-        // Determine which vehicle code field to use based on purchase type
+
         if ($purchase_type === 'For Truck Repair and Maintenance') {
-            $truck_code = $vehicle_code;
+            // Multi-truck: header-level truck_code stays NULL; each item carries its own
+            $truck_code = null;
         } elseif ($purchase_type === 'For Trailers') {
             $trailer_code = $vehicle_code;
         } elseif ($purchase_type === 'For Prime Movers') {
-            // Prime Movers now use truck_code since they come from truck_masterlist
             $prime_mover_code = $vehicle_code;
-        } elseif ($purchase_type === 'For Motorpool') {
-            $motorpool_category = $input['motorpool_category'] ?? null;
-            // Store in the appropriate field based on category
-            if ($motorpool_category === 'customer') {
-                $customer_code = $vehicle_code;
-                $vehicle_brand = $input['motorpool_category_label'] ?? 'Customer';
-            } elseif ($motorpool_category === 'truck') {
-                $truck_code = $vehicle_code;
-            } elseif ($motorpool_category === 'trailer') {
-                $trailer_code = $vehicle_code;
-            } elseif ($motorpool_category === 'prime_mover') {
-                $prime_mover_code = $vehicle_code;
-            }
         }
-        
+        // For Motorpool, Office Supplies, Stock → all remain null
+
         $conn->begin_transaction();
-        
+
         try {
-            // Calculate item-level discount total
             $total_item_discount = 0;
-            
+
             foreach ($input['items'] as $item) {
                 $item_code = $conn->real_escape_string($item['item_code']);
                 $item_name = $conn->real_escape_string($item['item_name']);
@@ -194,57 +161,67 @@ if (isset($_GET['action'])) {
                 $unit_cost = floatval($item['unit_cost']);
                 $item_discount = isset($item['discount']) ? floatval($item['discount']) : 0;
                 $item_discount_amount = isset($item['discount_amount']) ? floatval($item['discount_amount']) : 0;
-                
+
                 $total_item_discount += $item_discount_amount;
-                
+
                 $without_vat = floatval($item['without_vat']);
                 $vat_amount = floatval($item['vat_amount']);
                 $item_total = $unit_cost * $qty_ordered;
-                
-                // NOTE: The line item stores the item_total (before PO discount) and its original VAT.
-                // The PO header stores the adjusted total_amount and total_vat.
+
+                // Per-item truck code for multi-truck mode
+                $item_truck_code = null;
+                if ($purchase_type === 'For Truck Repair and Maintenance') {
+                    $item_truck_code = !empty($item['truck_code'])
+                        ? $conn->real_escape_string($item['truck_code'])
+                        : null;
+                } else {
+                    $item_truck_code = $truck_code;
+                }
+
+                // Per-item requested_by
+                $requested_by = isset($item['requested_by']) ? $conn->real_escape_string($item['requested_by']) : '';
+
                 $sql = "INSERT INTO purchase_order (
                     po_number, supplier_code, supplier_name, purchase_type, po_date, 
                     expected_delivery, payment_terms, currency, delivery_address, delivery_mode,
-                    item_code, item, part_number, unit, qty_ordered, unit_cost, warranty, remarks, freight,
+                    item_code, item, part_number, unit, qty_ordered, unit_cost, warranty, remarks, freight, labor,
                     subtotal, total_vat, total_amount, status, created_by, created_at,
                     truck_code, brand, model, with_vat, withholding_tax_percent, withholding_tax_amount, net_amount_due,
-                    trailer_code, prime_mover_code, customer_code,
+                    trailer_code, prime_mover_code,
                     discount_percent, discount_amount, item_discount_amount, requested_by
                 ) VALUES (
                     '$po_number', '$supplier_code', '$supplier_name', '$purchase_type', '$po_date',
                     " . ($expected_delivery ? "'$expected_delivery'" : "NULL") . ", '$payment_terms', '$currency', 
                     '$delivery_address', '$delivery_mode', '$item_code', '$item_name', '$part_number', '$unit', 
-                    $qty_ordered, $unit_cost, '$warranty', '$remarks', $freight,
+                    $qty_ordered, $unit_cost, '$warranty', '$remarks', $freight, $labor,
                     $without_vat, $vat_amount, $item_total, '$status', '$created_by', '$created_at',
-                    " . ($truck_code ? "'$truck_code'" : "NULL") . ", " . ($vehicle_brand ? "'$vehicle_brand'" : "NULL") . ", " . ($vehicle_model ? "'$vehicle_model'" : "NULL") . ",
+                    " . ($item_truck_code ? "'$item_truck_code'" : "NULL") . ", " . ($vehicle_brand ? "'$vehicle_brand'" : "NULL") . ", " . ($vehicle_model ? "'$vehicle_model'" : "NULL") . ",
                     $with_vat, $withholding_tax_percent, $withholding_tax_amount, $net_amount_due,
                     " . ($trailer_code ? "'$trailer_code'" : "NULL") . ",
                     " . ($prime_mover_code ? "'$prime_mover_code'" : "NULL") . ",
-                    " . ($customer_code ? "'$customer_code'" : "NULL") . ",
                     $discount_percent, $discount_amount, $item_discount_amount, '$requested_by'
                 )";
-                
+
                 if (!$conn->query($sql)) {
                     throw new Exception("Error inserting item: " . $conn->error);
                 }
             }
-            
+
             $conn->commit();
-            
+
             echo json_encode([
                 'success' => true, 
                 'message' => 'Purchase Order submitted for approval successfully!',
                 'po_number' => $po_number
             ]);
-            
+
         } catch (Exception $e) {
             $conn->rollback();
             echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         }
         exit;
     }
-    
+
     echo json_encode([]);
     exit;
 }
@@ -260,13 +237,8 @@ $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Guest';
 $full_name = $_SESSION['full_name'] ?? $username;
 
-// Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
-
-// Define base role - if 'admin' exists, user is admin
 $is_admin = in_array('admin', $user_roles);
-
-// Check if user has access to purchase order page (admin or purchase_order_maker)
 $can_access_po = $is_admin || in_array('purchase_order_maker', $user_roles);
 
 if (!$can_access_po) {
@@ -283,12 +255,10 @@ $current_page = basename($_SERVER['PHP_SELF']);
 
 function getNextPONumberDisplay($conn) {
     $currentYear = date('Y');
-    
     $sql = "SELECT po_number FROM purchase_order 
             WHERE po_number LIKE 'PO-" . $currentYear . "-%' 
             ORDER BY po_number DESC LIMIT 1";
     $result = $conn->query($sql);
-    
     if ($result && $row = $result->fetch_assoc()) {
         $lastPONumber = $row['po_number'];
         $parts = explode('-', $lastPONumber);
@@ -297,7 +267,6 @@ function getNextPONumberDisplay($conn) {
     } else {
         $nextSeq = 1;
     }
-    
     $formattedSeq = str_pad($nextSeq, 5, '0', STR_PAD_LEFT);
     return 'PO-' . $currentYear . '-' . $formattedSeq;
 }
@@ -321,6 +290,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     <link rel="stylesheet" href="css/purchase_order.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
+   
 </head>
 <body>
 
@@ -371,8 +341,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 
             </div>
             <div style="display:flex;align-items:center;gap:12px;">
-               
-
                 <a href="purchase_order_list_all.php" class="view-orders-btn">
                     <i data-lucide="list" style="width:16px;height:16px;"></i>
                     View Orders
@@ -381,6 +349,11 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 <a href="purchase_orders_list.php" class="view-orders-btn">
                     <i data-lucide="list" style="width:16px;height:16px;"></i>
                     Receive Orders
+                </a>
+
+                <a href="purchase_order_fuel.php" class="view-orders-btn">
+                    <i data-lucide="list" style="width:16px;height:16px;"></i>
+                    Fuel Purchase Order
                 </a>
             </div>
         </div>
@@ -442,19 +415,14 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <label>Processed By</label>
                     <input type="text" id="processed-by" value="<?php echo htmlspecialchars($username); ?>" readonly>
                 </div>
-                <div class="form-group">
-                    <label>Requested By <span style="color: red;">*</span></label>
-                    <select id="requested-by-employee" required>
-                        <option value="">-- Select Employee --</option>
-                    </select>
-                </div>
+                <!-- Requested By moved to Ordered Items (per row) -->
                 <div class="form-group full-width">
                     <label>Delivery / Ship-To Address</label>
                     <textarea id="delivery-address" placeholder="Enter delivery address"><?php echo htmlspecialchars($company_address); ?></textarea>
                 </div>
             </div>
             
-            <!-- Vehicle Selection Section -->
+            <!-- Vehicle Selection Section (Trailers / Prime Movers only) -->
             <div id="vehicle-section" class="vehicle-section" style="display: none;">
                 <div class="vehicle-section-title" id="vehicle-section-title">
                     <i data-lucide="truck" style="width:16px;height:16px;"></i>
@@ -462,7 +430,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <span class="vehicle-badge truck" id="vehicle-badge">Vehicle</span>
                 </div>
                 
-                <!-- Motorpool Category Selector (only shown for Motorpool) -->
+                <!-- Motorpool Category Selector (kept but never shown for Motorpool type) -->
                 <div id="motorpool-category-container" style="display: none;">
                     <div style="font-size:13px; font-weight:500; color:var(--text-muted); margin-bottom:8px;">Select Category:</div>
                     <div class="motorpool-category-selector" id="motorpool-category-selector">
@@ -481,14 +449,13 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     </div>
                 </div>
                 
-                <div class="vehicle-grid">
+                <div class="vehicle-grid" id="single-vehicle-grid">
                     <div class="form-group">
                         <label id="vehicle-code-label">Vehicle Code <span style="color: red;">*</span></label>
                         <select id="vehicle-code" onchange="onVehicleCodeChange(this.value)">
                             <option value="">-- Select --</option>
                         </select>
                     </div>
-                    <!-- Plate Number as dropdown (for truck & prime mover) / readonly for others -->
                     <div class="form-group" id="vehicle-plate-group">
                         <label id="vehicle-plate-label">Plate Number</label>
                         <select id="vehicle-plate-select" onchange="onVehiclePlateChange(this.value)" style="display:none;">
@@ -496,7 +463,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                         </select>
                         <input type="text" id="vehicle-plate" readonly style="background: #f1f5f9;">
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="vehicle-brand-group">
                         <label id="vehicle-brand-label">Brand / Manufacturer</label>
                         <input type="text" id="vehicle-brand" readonly style="background: #f1f5f9;">
                     </div>
@@ -530,12 +497,14 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
 
             <div id="items-section" style="display:none;">
                 <div class="table-wrapper" style="overflow-x: auto;">
-                    <table id="items-table" style="min-width: 1400px;">
+                    <table id="items-table" style="min-width: 1600px;">
                         <thead>
                             <tr>
                                 <th>#</th>
                                 <th>Item Code</th>
                                 <th>Item / Description</th>
+                                <th id="truck-col-header" style="display:none;">Plate Number / Truck</th>
+                                <th>Requested By <span style="color:red;">*</span></th>
                                 <th>Unit</th>
                                 <th>Qty Ordered</th>
                                 <th>Unit Cost</th>
@@ -591,6 +560,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Shipping / Freight</span>
                         <input type="number" id="freight" value="0" min="0" step="0.01" style="width:100px;text-align:right;padding:4px 8px;" oninput="calcTotals()">
                     </div>
+                    <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Labor <span style="font-size:12px;font-weight:500;color:#64748b;">(optional)</span></span>
+                        <input type="number" id="labor" value="0" min="0" step="0.01" style="width:100px;text-align:right;padding:4px 8px;" oninput="calcTotals()" placeholder="0.00">
+                    </div>
                     <div class="totals-row total-final"><span style="font-size: 20px; color: black; font-weight: 800;">Total PO Amount</span> <span id="grand-total">₱0.00</span></div>
                 </div>
                 
@@ -639,13 +611,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     const loadingModal = document.getElementById('loadingModal');
 
     function checkAccess(page) {
-        if (userRoles.includes('admin')) {
-            return true;
-        }
+        if (userRoles.includes('admin')) return true;
         for (let role of userRoles) {
-            if (allowedPages[role] && allowedPages[role].includes(page)) {
-                return true;
-            }
+            if (allowedPages[role] && allowedPages[role].includes(page)) return true;
         }
         modal.style.display = 'flex';
         return false;
@@ -656,9 +624,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     }
 
     modal.addEventListener('click', function(e) {
-        if (e.target === modal) {
-            closeModal();
-        }
+        if (e.target === modal) closeModal();
     });
 
     // ── State ──────────────────────────────────────────────────────────────────
@@ -673,51 +639,42 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
     let isVehicleSyncing = false;
     let selectedMotorpoolCategory = null;
 
-    // ── Helper: Check if a truck is a Prime Mover ──────────────────────────────
+    // Truck column is shown for Truck Repair type (no pre-selection of trucks)
+    let isTruckRepairMode = false;
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
     function isPrimeMover(truck) {
         const type = (truck.truck_type || '').toLowerCase().replace(/[\s_]/g, '');
         return type === 'primemover';
     }
 
-    // ── Helper: Get trucks excluding Prime Movers ──────────────────────────────
     function getRegularTrucks() {
         return trucksData.filter(t => !isPrimeMover(t));
     }
 
-    // ── Helper: Get only Prime Mover trucks ────────────────────────────────────
     function getPrimeMoverTrucks() {
         return trucksData.filter(t => isPrimeMover(t));
     }
 
-    // ── Helper: Determine current vehicle dataset based on state ──────────────
+    function isTruckRepairModeActive() {
+        return document.getElementById('purchase-type').value === 'For Truck Repair and Maintenance';
+    }
+
     function getCurrentVehicleDataset() {
         const purchaseType = document.getElementById('purchase-type').value;
-        const isMotorpool = purchaseType === 'For Motorpool';
 
-        if (isMotorpool) {
-            const category = selectedMotorpoolCategory || 'truck';
-            switch(category) {
-                case 'truck':       return { data: getRegularTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Truck' };
-                case 'trailer':     return { data: trailersData, codeField: 'trailer_code', brandField: 'manufacturer', modelField: 'model', label: 'Trailer' };
-                case 'prime_mover': return { data: getPrimeMoverTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Prime Mover' };
-                case 'customer':    return { data: customersData, codeField: 'customer_code', brandField: 'full_name', modelField: '', label: 'Customer' };
-            }
-        } else {
-            switch(purchaseType) {
-                case 'For Truck Repair and Maintenance': return { data: getRegularTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Truck' };
-                case 'For Trailers':                     return { data: trailersData, codeField: 'trailer_code', brandField: 'manufacturer', modelField: 'model', label: 'Trailer' };
-                case 'For Prime Movers':                 return { data: getPrimeMoverTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Prime Mover' };
-            }
+        switch(purchaseType) {
+            case 'For Truck Repair and Maintenance': return { data: getRegularTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Truck' };
+            case 'For Trailers':                     return { data: trailersData, codeField: 'trailer_code', brandField: 'manufacturer', modelField: 'model', label: 'Trailer' };
+            case 'For Prime Movers':                 return { data: getPrimeMoverTrucks(), codeField: 'truck_code', brandField: 'brand', modelField: 'model', label: 'Prime Mover' };
         }
         return null;
     }
 
-    // ── Helper: Should plate be a dropdown? (only Truck & Prime Mover) ────────
     function isPlateDropdown() {
         const info = getCurrentVehicleDataset();
         if (!info) return false;
-        // Only truck and prime mover support plate-number dropdown
-        return info.label === 'Truck' || info.label === 'Prime Mover';
+        return info.label === 'Truck' || info.label === 'Prime Mover' || info.label === 'Trailer';
     }
 
     // ── Load Suppliers ─────────────────────────────────────────────────────────
@@ -730,8 +687,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             console.error('Failed to load suppliers:', e);
         }
     }
-    
-    // ── Load All Items (regardless of supplier) ──────────────────────────────
+
+    // ── Load All Items ────────────────────────────────────────────────────────
     async function loadAllItems() {
         const notice = document.getElementById('no-items-notice');
         const section = document.getElementById('items-section');
@@ -760,12 +717,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
 
         notice.style.display = 'none';
         section.style.display = 'block';
-        
-        // Add initial row
         addRow();
     }
-    
-    // ── Load Trucks (includes Prime Movers) ────────────────────────────────────
+
     async function loadTrucks() {
         try {
             const res = await fetch('purchase_order.php?action=get_trucks');
@@ -774,8 +728,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             console.error('Failed to load trucks:', e);
         }
     }
-    
-    // ── Load Trailers ──────────────────────────────────────────────────────────
+
     async function loadTrailers() {
         try {
             const res = await fetch('purchase_order.php?action=get_trailers');
@@ -784,8 +737,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             console.error('Failed to load trailers:', e);
         }
     }
-    
-    // ── Load Customers ─────────────────────────────────────────────────────────
+
     async function loadCustomers() {
         try {
             const res = await fetch('purchase_order.php?action=get_customers');
@@ -794,47 +746,16 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             console.error('Failed to load customers:', e);
         }
     }
-    
-    // ── Load Employees ─────────────────────────────────────────────────────────
+
     async function loadEmployees() {
         try {
             const res = await fetch('purchase_order.php?action=get_employees');
             employeesData = await res.json();
-            populateEmployeeDropdown();
         } catch (e) {
             console.error('Failed to load employees:', e);
         }
     }
-    
-    // ── Populate Employee Dropdown ─────────────────────────────────────────────
-    function populateEmployeeDropdown() {
-        const select = document.getElementById('requested-by-employee');
-        select.innerHTML = '<option value="">-- Select Employee --</option>';
-        employeesData.forEach(emp => {
-            select.innerHTML += `<option value="${emp.full_name}">${emp.full_name}</option>`;
-        });
-    }
-    
-    // ── Build Item Options ────────────────────────────────────────────────────
-    function buildItemOptions() {
-        let opts = '<option value="">-- Select Item --</option>';
-        allItemsData.forEach(item => {
-            const price = item.selling_price || item.purchase_price || '0.00';
-            const partNumber = item.part_number || '';
-            const displayText = partNumber 
-                ? `[${item.item_code}] ${item.item_name} <span style="font-size:11px;color:#666;">(${partNumber})</span>`
-                : `[${item.item_code}] ${item.item_name}`;
-            opts += `<option value="${item.item_code}"
-                data-unit="${item.unit_of_measure}"
-                data-price="${price}"
-                data-part-number="${partNumber}">
-                ${displayText}
-            </option>`;
-        });
-        return opts;
-    }
 
-    // ── Populate Supplier Dropdowns ──────────────────────────────────────────
     function populateSupplierDropdowns() {
         const codeSelect = document.getElementById('supplier-code-select');
         const nameSelect = document.getElementById('supplier-name-select');
@@ -848,57 +769,103 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         });
     }
 
-    // ── Populate Payment Terms Dropdown ──────────────────────────────────────
     function populatePaymentTerms(paymentTermsString) {
         const paymentSelect = document.getElementById('payment-terms');
-        
         paymentSelect.innerHTML = '<option value="">-- Select Payment Terms --</option>';
-        
-        if (!paymentTermsString || paymentTermsString.trim() === '') {
-            return;
-        }
-        
+        if (!paymentTermsString || paymentTermsString.trim() === '') return;
         const terms = paymentTermsString.split(',').map(term => term.trim()).filter(term => term !== '');
         const uniqueTerms = [...new Set(terms)];
-        
         uniqueTerms.forEach(term => {
             const option = document.createElement('option');
             option.value = term;
             option.textContent = term;
             paymentSelect.appendChild(option);
         });
-        
-        if (uniqueTerms.length > 0) {
-            paymentSelect.value = uniqueTerms[0];
-        }
+        if (uniqueTerms.length > 0) paymentSelect.value = uniqueTerms[0];
     }
 
-    // ── Supplier Code changed ──────────────────────────────────────────────────
     function onSupplierCodeChange(code) {
         if (isSyncing) return;
         isSyncing = true;
-        
         const selectedOption = document.querySelector(`#supplier-code-select option[value="${code}"]`);
         const paymentTerms = selectedOption ? selectedOption.dataset.paymentTerms : '';
-        
         populatePaymentTerms(paymentTerms);
-        
         document.getElementById('supplier-name-select').value = code;
         isSyncing = false;
     }
 
-    // ── Supplier Name changed ──────────────────────────────────────────────────
     function onSupplierNameChange(code) {
         if (isSyncing) return;
         isSyncing = true;
-        
         const selectedOption = document.querySelector(`#supplier-name-select option[value="${code}"]`);
         const paymentTerms = selectedOption ? selectedOption.dataset.paymentTerms : '';
-        
         populatePaymentTerms(paymentTerms);
-        
         document.getElementById('supplier-code-select').value = code;
         isSyncing = false;
+    }
+
+    // ── Truck assignment column (for Truck Repair – all trucks available) ─────
+    function refreshTruckAssignmentColumn() {
+        const header = document.getElementById('truck-col-header');
+        const cells = document.querySelectorAll('.truck-assign-cell');
+        const shouldShow = isTruckRepairModeActive();
+        
+        if (header) header.style.display = shouldShow ? 'table-cell' : 'none';
+        cells.forEach(cell => {
+            cell.style.display = shouldShow ? 'table-cell' : 'none';
+            if (shouldShow) {
+                populateTruckAssignSelect(cell.querySelector('.truck-assign-select'));
+            }
+        });
+    }
+
+    function populateTruckAssignSelect(select) {
+        if (!select) return;
+        const currentVal = select.value;
+        const trucks = getRegularTrucks();
+        
+        select.innerHTML = '<option value="">-- Select Truck --</option>';
+        trucks.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.truck_code;
+            opt.textContent = `${t.plate_number || 'N/A'} — ${t.truck_code}`;
+            select.appendChild(opt);
+        });
+        
+        if (currentVal && trucks.some(t => t.truck_code === currentVal)) {
+            select.value = currentVal;
+        }
+        updateTruckAssignStyle(select);
+    }
+
+    function updateTruckAssignStyle(select) {
+        if (!select) return;
+        if (select.value) select.classList.add('is-assigned');
+        else select.classList.remove('is-assigned');
+    }
+
+    function onTruckAssignChange(select) {
+        updateTruckAssignStyle(select);
+    }
+
+    // ── Requested By (per row) ────────────────────────────────────────────────
+    function populateRequestedBySelect(select) {
+        if (!select) return;
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">-- Select Employee --</option>';
+        employeesData.forEach(emp => {
+            const opt = document.createElement('option');
+            opt.value = emp.full_name;
+            opt.textContent = emp.full_name;
+            select.appendChild(opt);
+        });
+        if (currentVal) select.value = currentVal;
+    }
+
+    function refreshRequestedByColumns() {
+        document.querySelectorAll('.requested-by-select').forEach(sel => {
+            populateRequestedBySelect(sel);
+        });
     }
 
     // ── Add Row ──────────────────────────────────────────────────────────────
@@ -910,8 +877,27 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             <td style="color:var(--text-muted);font-weight:600;">${rowCount}</td>
             <td class="item-code-cell" style="font-size:12px;color:var(--text-muted);font-weight:600;white-space:nowrap;">—</td>
             <td>
-                <select class="item-select" style="min-width:200px;" onchange="onItemChange(this)">
-                    ${buildItemOptions()}
+                <div class="item-search-wrap">
+                    <input type="text"
+                           class="item-search-input"
+                           placeholder="Search item by code, name or part no..."
+                           autocomplete="off"
+                           oninput="onItemInput(this)"
+                           onfocus="onItemInput(this)"
+                           onkeydown="onItemKeydown(event, this)"
+                           onblur="onItemBlur(this)">
+                    <input type="hidden" class="item-code-hidden" value="">
+                    <div class="item-suggestions"></div>
+                </div>
+            </td>
+            <td class="truck-assign-cell" style="display:none;">
+                <select class="truck-assign-select" onchange="onTruckAssignChange(this)">
+                    <option value="">-- Select Truck --</option>
+                </select>
+            </td>
+            <td>
+                <select class="requested-by-select" style="min-width:160px;">
+                    <option value="">-- Select Employee --</option>
                 </select>
             </td>
             <td><input type="text" class="unit-input" value="" style="width:80px;text-align:center;" readonly></td>
@@ -927,7 +913,134 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         tbody.appendChild(tr);
         lucide.createIcons();
         
+        // Populate selects for this new row
+        populateRequestedBySelect(tr.querySelector('.requested-by-select'));
+        refreshTruckAssignmentColumn();
         calculateRowTotals(tr);
+    }
+
+    // ── Searchable Item Input ──────────────────────────────────────────────────
+    function onItemInput(input) {
+        const wrap = input.closest('.item-search-wrap');
+        const suggestions = wrap.querySelector('.item-suggestions');
+        const hidden = wrap.querySelector('.item-code-hidden');
+
+        if (hidden.value) {
+            const sel = allItemsData.find(i => i.item_code === hidden.value);
+            if (sel) {
+                const pn = (sel.part_number && sel.part_number !== '0') ? ` (${sel.part_number})` : '';
+                const expected = `[${sel.item_code}] ${sel.item_name}${pn}`;
+                if (input.value !== expected) {
+                    hidden.value = '';
+                    input.classList.remove('is-selected');
+                    delete input.closest('tr').dataset.partNumber;
+                    const row = input.closest('tr');
+                    row.querySelector('.item-code-cell').textContent = '—';
+                    row.querySelector('.unit-input').value = '';
+                    row.querySelector('.price-input').value = '0.00';
+                    calculateRowTotals(row);
+                    calcTotals();
+                }
+            }
+        }
+
+        const query = input.value.trim().toLowerCase();
+        let matches = allItemsData;
+        if (query) {
+            matches = allItemsData.filter(item => {
+                const code = (item.item_code || '').toLowerCase();
+                const name = (item.item_name || '').toLowerCase();
+                const pn   = (item.part_number && item.part_number !== '0') ? item.part_number.toLowerCase() : '';
+                return code.includes(query) || name.includes(query) || pn.includes(query);
+            });
+        }
+
+        const limited = matches.slice(0, 50);
+
+        if (limited.length === 0) {
+            suggestions.innerHTML = `<div class="item-suggestion-empty">No matching items</div>`;
+        } else {
+            suggestions.innerHTML = limited.map((item) => {
+                const hasPN = item.part_number && item.part_number !== '0';
+                const pn = hasPN ? `<span class="sg-pn">(${item.part_number})</span>` : '';
+                return `<div class="item-suggestion"
+                             data-code="${item.item_code}"
+                             onmousedown="selectItemSuggestion(event, this)">
+                    <span class="sg-code">[${item.item_code}]</span> ${item.item_name} ${pn}
+                </div>`;
+            }).join('');
+        }
+
+        suggestions.classList.add('open');
+        suggestions.dataset.activeIdx = '-1';
+    }
+
+    function onItemKeydown(event, input) {
+        const wrap = input.closest('.item-search-wrap');
+        const suggestions = wrap.querySelector('.item-suggestions');
+        if (!suggestions.classList.contains('open')) return;
+        const items = suggestions.querySelectorAll('.item-suggestion');
+        if (items.length === 0) return;
+
+        let activeIdx = parseInt(suggestions.dataset.activeIdx || '-1');
+
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            activeIdx = Math.min(activeIdx + 1, items.length - 1);
+            items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+            suggestions.dataset.activeIdx = activeIdx;
+            items[activeIdx].scrollIntoView({ block: 'nearest' });
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            activeIdx = Math.max(activeIdx - 1, 0);
+            items.forEach((el, i) => el.classList.toggle('active', i === activeIdx));
+            suggestions.dataset.activeIdx = activeIdx;
+            items[activeIdx].scrollIntoView({ block: 'nearest' });
+        } else if (event.key === 'Enter') {
+            event.preventDefault();
+            if (activeIdx >= 0 && items[activeIdx]) {
+                selectItemSuggestion(new Event('mousedown'), items[activeIdx]);
+            }
+        } else if (event.key === 'Escape') {
+            suggestions.classList.remove('open');
+        }
+    }
+
+    function onItemBlur(input) {
+        const wrap = input.closest('.item-search-wrap');
+        const suggestions = wrap.querySelector('.item-suggestions');
+        setTimeout(() => suggestions.classList.remove('open'), 150);
+    }
+
+    function selectItemSuggestion(event, el) {
+        event.preventDefault();
+        const wrap = el.closest('.item-search-wrap');
+        const row = el.closest('tr');
+        const input = wrap.querySelector('.item-search-input');
+        const hidden = wrap.querySelector('.item-code-hidden');
+        const suggestions = wrap.querySelector('.item-suggestions');
+
+        const code = el.dataset.code;
+        const item = allItemsData.find(i => i.item_code === code);
+        if (!item) return;
+
+        const price = item.selling_price || item.purchase_price || '0.00';
+        const hasPN = item.part_number && item.part_number !== '0';
+        const pn = hasPN ? ` (${item.part_number})` : '';
+
+        input.value = `[${item.item_code}] ${item.item_name}${pn}`;
+        input.classList.add('is-selected');
+        hidden.value = item.item_code;
+        row.dataset.partNumber = hasPN ? item.part_number : '';
+
+        row.querySelector('.item-code-cell').textContent = item.item_code;
+        row.querySelector('.unit-input').value = item.unit_of_measure || '';
+        row.querySelector('.price-input').value = parseFloat(price).toFixed(2);
+
+        suggestions.classList.remove('open');
+
+        calculateRowTotals(row);
+        calcTotals();
     }
 
     // ── Calculate Row Totals ──────────────────────────────────────────────────
@@ -946,7 +1059,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         }
         
         let discountedTotal = itemSubtotal - discountAmount;
-        
         let withoutVAT, vatAmount, totalCost;
         
         if (withVAT) {
@@ -965,8 +1077,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         
         return { totalCost, withoutVAT, vatAmount, discountAmount };
     }
-    
-    // ── Toggle VAT ────────────────────────────────────────────────────────────
+
     function toggleVAT() {
         document.querySelectorAll('#items-body tr').forEach(row => {
             calculateRowTotals(row);
@@ -987,44 +1098,13 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             badge.className = 'vat-status-badge exclusive';
         }
     }
-    
-    // ── Item Change ──────────────────────────────────────────────────────────
-    function onItemChange(select) {
-        const row = select.closest('tr');
-        const selected = select.options[select.selectedIndex];
 
-        if (!selected.value) {
-            row.querySelector('.item-code-cell').textContent = '—';
-            row.querySelector('.unit-input').value = '';
-            row.querySelector('.price-input').value = '0.00';
-            delete row.dataset.partNumber;
-            calculateRowTotals(row);
-            calcTotals();
-            return;
-        }
-
-        const unit = selected.dataset.unit || '';
-        const price = selected.dataset.price || '0.00';
-        const partNumber = selected.dataset.partNumber || '';
-
-        row.querySelector('.item-code-cell').textContent = selected.value;
-        row.querySelector('.unit-input').value = unit;
-        row.querySelector('.price-input').value = parseFloat(price).toFixed(2);
-        
-        row.dataset.partNumber = partNumber;
-        
-        calculateRowTotals(row);
-        calcTotals();
-    }
-    
-    // ── Calculate Row Totals on Input ────────────────────────────────────────
     function calcRowTotals(inputElement) {
         const row = inputElement.closest('tr');
         calculateRowTotals(row);
         calcTotals();
     }
 
-    // ── Remove Row ───────────────────────────────────────────────────────────
     function removeRow(btn) {
         const rows = document.querySelectorAll('#items-body tr');
         if (rows.length === 1) return;
@@ -1032,15 +1112,14 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         document.querySelectorAll('#items-body tr').forEach((r, i) => {
             r.cells[0].textContent = i + 1;
         });
+        rowCount = document.querySelectorAll('#items-body tr').length;
         calcTotals();
     }
 
-    // ── Format PHP ─────────────────────────────────────────────────────────────
     function formatPHP(val) {
         return '₱' + parseFloat(val).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // ── Calculate Totals ──────────────────────────────────────────────────────
     function calcTotals() {
         let totalItemSubtotal = 0;
         let totalItemDiscount = 0;
@@ -1082,8 +1161,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         }
         
         const freight = parseFloat(document.getElementById('freight').value) || 0;
-        
-        const grand = subtotalAfterPODiscount + finalVAT + freight;
+        const labor = parseFloat(document.getElementById('labor').value) || 0;
+        const grand = subtotalAfterPODiscount + finalVAT + freight + labor;
         
         document.getElementById('item-subtotal-display').textContent = formatPHP(totalItemSubtotal);
         document.getElementById('item-discount-total').textContent = formatPHP(totalItemDiscount);
@@ -1100,39 +1179,30 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             totalVAT: finalVAT,
             grand,
             poDiscountAmount,
-            subtotalAfterPODiscount
+            subtotalAfterPODiscount,
+            labor
         };
     }
-    
-    // ── Withholding Tax Functions ──────────────────────────────────────────────
+
     function toggleWithholdingTax() {
         const isChecked = document.getElementById('apply-withholding-tax').checked;
         const taxDetails = document.getElementById('tax-details');
-        
-        if (isChecked) {
-            taxDetails.style.display = 'block';
-        } else {
-            taxDetails.style.display = 'none';
-        }
-        
+        taxDetails.style.display = isChecked ? 'block' : 'none';
         const totals = calcTotals();
         updateWithholdingTax(totals.subtotalAfterPODiscount, totals.grand);
     }
-    
+
     function updateWithholdingTax(taxBase, grandTotal) {
         const isChecked = document.getElementById('apply-withholding-tax').checked;
         const taxBaseSpan = document.getElementById('tax-base-amount');
         const withholdingSpan = document.getElementById('withholding-tax-amount');
         const netAmountSpan = document.getElementById('net-amount-due');
         
-        if (taxBaseSpan) {
-            taxBaseSpan.textContent = formatPHP(taxBase);
-        }
+        if (taxBaseSpan) taxBaseSpan.textContent = formatPHP(taxBase);
         
         if (isChecked) {
             const withholdingTax = taxBase * 0.05;
             const netAmount = grandTotal - withholdingTax;
-            
             if (withholdingSpan) withholdingSpan.textContent = formatPHP(withholdingTax);
             if (netAmountSpan) netAmountSpan.textContent = formatPHP(netAmount);
         } else {
@@ -1141,86 +1211,47 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         }
     }
 
-    // ── Select Motorpool Category ──────────────────────────────────────────────
+    // ── Vehicle selection helpers (still used by Trailers & Prime Movers) ─────
     function selectMotorpoolCategory(category) {
+        // Kept for compatibility but never called when purchase type is For Motorpool
         selectedMotorpoolCategory = category;
-        
-        document.querySelectorAll('.category-btn').forEach(btn => {
-            btn.classList.remove('active');
-            if (btn.dataset.category === category) {
-                btn.classList.add('active');
-            }
-        });
-        
-        // Populate the dropdown based on category
-        populateMotorpoolDropdown(category);
-        
-        // Reset vehicle info display
-        document.getElementById('vehicle-brand').value = '';
-        document.getElementById('vehicle-model').value = '';
-        document.getElementById('vehicle-info-display').style.display = 'none';
-        document.getElementById('vehicle-code').value = '';
-        document.getElementById('vehicle-plate').value = '';
-        document.getElementById('vehicle-plate-select').value = '';
-        
-        // Update label
-        const categoryLabels = {
-            'truck': 'Truck Code',
-            'trailer': 'Trailer Code',
-            'prime_mover': 'Prime Mover Code',
-            'customer': 'Customer Code'
-        };
-        document.getElementById('vehicle-code-label').textContent = categoryLabels[category] || 'Vehicle Code';
-        
-        // Update brand label
-        const brandLabels = {
-            'truck': 'Brand',
-            'trailer': 'Manufacturer',
-            'prime_mover': 'Brand',
-            'customer': 'Customer Name'
-        };
-        document.getElementById('vehicle-brand-label').textContent = brandLabels[category] || 'Brand / Manufacturer';
-        
-        // Hide model/plate field for customers
-        const modelGroup = document.getElementById('vehicle-model-group');
-        const plateGroup = document.getElementById('vehicle-plate-group');
-        if (category === 'customer') {
-            modelGroup.style.display = 'none';
-            plateGroup.style.display = 'none';
-        } else {
-            modelGroup.style.display = 'block';
-            plateGroup.style.display = 'block';
-        }
-
-        // Update plate display mode (dropdown for truck & prime mover, readonly otherwise)
-        updatePlateFieldMode();
     }
-    
-    // ── Update Plate Field Mode (dropdown vs readonly input) ───────────────────
+
     function updatePlateFieldMode() {
         const plateSelect = document.getElementById('vehicle-plate-select');
-        const plateInput = document.getElementById('vehicle-plate');
-        const plateLabel = document.getElementById('vehicle-plate-label');
+        const plateInput  = document.getElementById('vehicle-plate');
+        const plateLabel  = document.getElementById('vehicle-plate-label');
+        const brandGroup  = document.getElementById('vehicle-brand-group');
+        const modelGroup  = document.getElementById('vehicle-model-group');
+
+        const info = getCurrentVehicleDataset();
+        const isTrailer = info && info.label === 'Trailer';
 
         if (isPlateDropdown()) {
             plateLabel.textContent = 'Plate Number';
             plateSelect.style.display = 'block';
-            plateInput.style.display = 'none';
+            plateInput.style.display  = 'none';
         } else {
             plateLabel.textContent = 'Plate Number';
             plateSelect.style.display = 'none';
-            plateInput.style.display = 'block';
+            plateInput.style.display  = 'block';
+        }
+
+        if (isTrailer) {
+            brandGroup.style.display = 'none';
+            modelGroup.style.display = 'none';
+        } else if (info) {
+            brandGroup.style.display = 'block';
+            modelGroup.style.display = 'block';
         }
     }
 
-    // ── Populate Plate Number Dropdown (for Truck & Prime Mover) ──────────────
     function populatePlateNumberDropdown() {
         const plateSelect = document.getElementById('vehicle-plate-select');
         const info = getCurrentVehicleDataset();
         if (!info) return;
         
         plateSelect.innerHTML = '<option value="">-- Select Plate Number --</option>';
-        
         info.data.forEach(item => {
             const plate = item.plate_number || '';
             const code = item[info.codeField] || '';
@@ -1231,88 +1262,24 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         });
     }
 
-    // ── Populate Motorpool Dropdown ───────────────────────────────────────────
-    function populateMotorpoolDropdown(category) {
-        const vehicleSelect = document.getElementById('vehicle-code');
-        vehicleSelect.innerHTML = '<option value="">-- Select --</option>';
-        
-        let data = [];
-        let codeField = '';
-        let brandField = '';
-        let modelField = '';
-        
-        switch(category) {
-            case 'truck':
-                data = getRegularTrucks();
-                codeField = 'truck_code';
-                brandField = 'brand';
-                modelField = 'model';
-                break;
-            case 'trailer':
-                data = trailersData;
-                codeField = 'trailer_code';
-                brandField = 'manufacturer';
-                modelField = 'model';
-                break;
-            case 'prime_mover':
-                data = getPrimeMoverTrucks();
-                codeField = 'truck_code';
-                brandField = 'brand';
-                modelField = 'model';
-                break;
-            case 'customer':
-                data = customersData;
-                codeField = 'customer_code';
-                brandField = 'full_name';
-                modelField = '';
-                break;
-            default:
-                return;
-        }
-        
-        data.forEach(item => {
-            const label = item[codeField] || '';
-            const brandVal = item[brandField] || '';
-            const modelVal = item[modelField] || '';
-            const plate = item.plate_number || '';
-            const displayText = category === 'customer' 
-                ? `${label} - ${brandVal}`
-                : label;
-            vehicleSelect.innerHTML += `<option value="${label}" data-brand="${brandVal}" data-model="${modelVal}" data-plate="${plate}">${displayText}</option>`;
-        });
-
-        // Also populate plate dropdown if applicable
-        populatePlateNumberDropdown();
-    }
-    
-    // ── Populate Vehicle Dropdown (for non-motorpool) ──────────────────────────
     function populateVehicleDropdown(vehicleType) {
         const vehicleSelect = document.getElementById('vehicle-code');
         vehicleSelect.innerHTML = '<option value="">-- Select --</option>';
         
-        let data = [];
-        let codeField = '';
-        let brandField = '';
-        let modelField = '';
+        let data = [], codeField = '', brandField = '', modelField = '';
         
         switch(vehicleType) {
             case 'truck':
                 data = getRegularTrucks();
-                codeField = 'truck_code';
-                brandField = 'brand';
-                modelField = 'model';
+                codeField = 'truck_code'; brandField = 'brand'; modelField = 'model';
                 break;
             case 'trailer':
                 data = trailersData;
-                codeField = 'trailer_code';
-                brandField = 'manufacturer';
-                modelField = 'model';
+                codeField = 'trailer_code'; brandField = 'manufacturer'; modelField = 'model';
                 break;
             case 'prime_mover':
                 data = getPrimeMoverTrucks();
-                codeField = 'truck_code';
-                brandField = 'brand';
-                modelField = 'model';
+                codeField = 'truck_code'; brandField = 'brand'; modelField = 'model';
                 break;
             default:
                 return;
@@ -1323,20 +1290,15 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             vehicleSelect.innerHTML += `<option value="${label}" data-brand="${item[brandField] || ''}" data-model="${item[modelField] || ''}" data-plate="${item.plate_number || ''}">${label}</option>`;
         });
 
-        // Also populate plate dropdown if applicable
         populatePlateNumberDropdown();
     }
-    
-    // ── Handle Vehicle Code Change ─────────────────────────────────────────────
+
     function onVehicleCodeChange(vehicleCode) {
         if (isVehicleSyncing) return;
         isVehicleSyncing = true;
 
         const info = getCurrentVehicleDataset();
-        if (!info) {
-            isVehicleSyncing = false;
-            return;
-        }
+        if (!info) { isVehicleSyncing = false; return; }
 
         const selectedVehicle = info.data.find(item => item[info.codeField] === vehicleCode);
         const brandInput = document.getElementById('vehicle-brand');
@@ -1350,11 +1312,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             modelInput.value = selectedVehicle[info.modelField] || '';
             plateInput.value = selectedVehicle.plate_number || '';
 
-            // Sync plate dropdown if it's active
             if (isPlateDropdown()) {
                 const targetPlate = selectedVehicle.plate_number || '';
                 if (plateSelect.value !== targetPlate) {
-                    // Find matching option by plate
                     const opt = Array.from(plateSelect.options).find(o => o.value === targetPlate);
                     plateSelect.value = opt ? targetPlate : '';
                 }
@@ -1372,16 +1332,12 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         isVehicleSyncing = false;
     }
 
-    // ── Handle Vehicle Plate Change (dropdown) ─────────────────────────────────
     function onVehiclePlateChange(plateValue) {
         if (isVehicleSyncing) return;
         isVehicleSyncing = true;
 
         const info = getCurrentVehicleDataset();
-        if (!info) {
-            isVehicleSyncing = false;
-            return;
-        }
+        if (!info) { isVehicleSyncing = false; return; }
 
         const selectedVehicle = info.data.find(item => (item.plate_number || '') === plateValue);
         const codeSelect = document.getElementById('vehicle-code');
@@ -1392,13 +1348,10 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
 
         if (selectedVehicle) {
             const targetCode = selectedVehicle[info.codeField] || '';
-            if (codeSelect.value !== targetCode) {
-                codeSelect.value = targetCode;
-            }
+            if (codeSelect.value !== targetCode) codeSelect.value = targetCode;
             brandInput.value = selectedVehicle[info.brandField] || '';
             modelInput.value = selectedVehicle[info.modelField] || '';
             plateInput.value = selectedVehicle.plate_number || '';
-
             renderVehicleInfo(selectedVehicle, info);
         } else {
             codeSelect.value = '';
@@ -1411,26 +1364,26 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         isVehicleSyncing = false;
     }
 
-    // ── Render Vehicle Info Panel ──────────────────────────────────────────────
     function renderVehicleInfo(selectedVehicle, info) {
         const infoDisplay = document.getElementById('vehicle-info-display');
-        const isMotorpool = document.getElementById('purchase-type').value === 'For Motorpool';
-        const brandLabel = isMotorpool && selectedMotorpoolCategory === 'customer' ? 'Customer Name' : 
-                          (info.brandField === 'manufacturer' ? 'Manufacturer' : 'Brand');
-
+        
         infoDisplay.style.display = 'block';
         let infoHTML = `<strong>Selected ${info.label}:</strong> ${selectedVehicle[info.codeField]}<br>`;
-        infoHTML += `<strong>${brandLabel}:</strong> ${selectedVehicle[info.brandField] || 'N/A'}`;
-        if (selectedVehicle[info.modelField]) {
-            infoHTML += `<br><strong>Model:</strong> ${selectedVehicle[info.modelField]}`;
+
+        if (info.label === 'Trailer') {
+            if (selectedVehicle.plate_number) infoHTML += `<strong>Plate Number:</strong> ${selectedVehicle.plate_number}`;
+            if (selectedVehicle.trailer_type) infoHTML += `<br><strong>Trailer Type:</strong> ${selectedVehicle.trailer_type}`;
+        } else {
+            const brandLabel = (info.brandField === 'manufacturer' ? 'Manufacturer' : 'Brand');
+            infoHTML += `<strong>${brandLabel}:</strong> ${selectedVehicle[info.brandField] || 'N/A'}`;
+            if (selectedVehicle[info.modelField]) infoHTML += `<br><strong>Model:</strong> ${selectedVehicle[info.modelField]}`;
+            if (selectedVehicle.plate_number) infoHTML += `<br><strong>Plate Number:</strong> ${selectedVehicle.plate_number}`;
         }
-        if (selectedVehicle.plate_number) {
-            infoHTML += `<br><strong>Plate Number:</strong> ${selectedVehicle.plate_number}`;
-        }
+
         infoDisplay.innerHTML = infoHTML;
     }
-    
-    // ── Handle Purchase Type Change ──────────────────────────────────────────
+
+    // ── Purchase Type Change ──────────────────────────────────────────────────
     function onPurchaseTypeChange(purchaseType) {
         const vehicleSection = document.getElementById('vehicle-section');
         const sectionTitle = document.getElementById('vehicle-section-title');
@@ -1442,8 +1395,10 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         const plateSelect = document.getElementById('vehicle-plate-select');
         const infoDisplay = document.getElementById('vehicle-info-display');
         const motorpoolContainer = document.getElementById('motorpool-category-container');
+        const brandGroup = document.getElementById('vehicle-brand-group');
         const modelGroup = document.getElementById('vehicle-model-group');
         const plateGroup = document.getElementById('vehicle-plate-group');
+        const singleVehicleGrid = document.getElementById('single-vehicle-grid');
         
         // Reset vehicle fields
         vehicleSelect.value = '';
@@ -1453,46 +1408,42 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         plateSelect.value = '';
         infoDisplay.style.display = 'none';
         
-        const vehicleTypes = ['For Truck Repair and Maintenance', 'For Trailers', 'For Prime Movers'];
-        const isMotorpool = purchaseType === 'For Motorpool';
+        isTruckRepairMode = false;
         
-        if (vehicleTypes.includes(purchaseType)) {
+        const vehicleTypes = ['For Trailers', 'For Prime Movers'];
+        
+        if (purchaseType === 'For Truck Repair and Maintenance') {
+            // No top-level Truck Information section. Trucks are chosen per item row.
+            isTruckRepairMode = true;
+            vehicleSection.style.display = 'none';
+            motorpoolContainer.style.display = 'none';
+            if (singleVehicleGrid) singleVehicleGrid.style.display = 'grid';
+            vehicleSelect.required = false;
+            
+        } else if (vehicleTypes.includes(purchaseType)) {
+            // SINGLE VEHICLE MODE (Trailer / Prime Mover)
             vehicleSection.style.display = 'block';
             motorpoolContainer.style.display = 'none';
-            modelGroup.style.display = 'block';
-            plateGroup.style.display = 'block';
+            if (singleVehicleGrid) singleVehicleGrid.style.display = 'grid';
             
-            let icon = 'truck';
-            let label = '';
-            let badgeClass = '';
-            let badgeText = '';
-            let codeFieldLabel = '';
+            let icon, label, badgeClass, badgeText, codeFieldLabel;
             
-            switch(purchaseType) {
-                case 'For Truck Repair and Maintenance':
-                    icon = 'truck';
-                    label = 'Truck Information';
-                    badgeClass = 'truck';
-                    badgeText = 'Truck';
-                    codeFieldLabel = 'Truck Code';
-                    populateVehicleDropdown('truck');
-                    break;
-                case 'For Trailers':
-                    icon = 'box';
-                    label = 'Trailer Information';
-                    badgeClass = 'trailer';
-                    badgeText = 'Trailer';
-                    codeFieldLabel = 'Trailer Code';
-                    populateVehicleDropdown('trailer');
-                    break;
-                case 'For Prime Movers':
-                    icon = 'truck';
-                    label = 'Prime Mover Information';
-                    badgeClass = 'prime-mover';
-                    badgeText = 'Prime Mover';
-                    codeFieldLabel = 'Prime Mover Code';
-                    populateVehicleDropdown('prime_mover');
-                    break;
+            if (purchaseType === 'For Trailers') {
+                icon = 'box'; label = 'Trailer Information';
+                badgeClass = 'trailer'; badgeText = 'Trailer';
+                codeFieldLabel = 'Trailer Code';
+                populateVehicleDropdown('trailer');
+                brandGroup.style.display = 'none';
+                modelGroup.style.display = 'none';
+                plateGroup.style.display = 'block';
+            } else {
+                icon = 'truck'; label = 'Prime Mover Information';
+                badgeClass = 'prime-mover'; badgeText = 'Prime Mover';
+                codeFieldLabel = 'Prime Mover Code';
+                populateVehicleDropdown('prime_mover');
+                brandGroup.style.display = 'block';
+                modelGroup.style.display = 'block';
+                plateGroup.style.display = 'block';
             }
             
             sectionTitle.innerHTML = `
@@ -1501,48 +1452,20 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 <span class="vehicle-badge ${badgeClass}">${badgeText}</span>
             `;
             codeLabel.textContent = codeFieldLabel + ' *';
-            
-            lucide.createIcons();
             vehicleSelect.required = true;
             selectedMotorpoolCategory = null;
-            
-            // Update plate field mode (dropdown for truck/prime mover, readonly for trailer)
             updatePlateFieldMode();
-            
-        } else if (isMotorpool) {
-            vehicleSection.style.display = 'block';
-            motorpoolContainer.style.display = 'block';
-            modelGroup.style.display = 'block';
-            plateGroup.style.display = 'block';
-            
-            sectionTitle.innerHTML = `
-                <i data-lucide="users" style="width:16px;height:16px;"></i>
-                <span id="vehicle-section-label">Motorpool Information</span>
-                <span class="vehicle-badge motorpool">Motorpool</span>
-            `;
-            
-            document.querySelectorAll('.category-btn').forEach(btn => btn.classList.remove('active'));
-            selectedMotorpoolCategory = null;
-            codeLabel.textContent = 'Select a category above *';
-            vehicleSelect.innerHTML = '<option value="">-- Select a category first --</option>';
-            vehicleSelect.required = true;
-            
-            document.getElementById('vehicle-brand-label').textContent = 'Brand / Manufacturer';
-            modelGroup.style.display = 'block';
-            plateGroup.style.display = 'block';
-            
-            // Reset plate select options; will be populated when a category is chosen
-            plateSelect.innerHTML = '<option value="">-- Select Plate Number --</option>';
-            updatePlateFieldMode();
-            
             lucide.createIcons();
             
         } else {
+            // For Office Supplies, For Stock, For Motorpool, or empty → hide everything
             vehicleSection.style.display = 'none';
             motorpoolContainer.style.display = 'none';
             vehicleSelect.required = false;
             selectedMotorpoolCategory = null;
         }
+        
+        refreshTruckAssignmentColumn();
     }
 
     // ── Collect Form Data ──────────────────────────────────────────────────────
@@ -1554,9 +1477,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         
         let supplierName = '';
         const selectedSupplier = suppliersData.find(s => s.supplier_code === supplierCode);
-        if (selectedSupplier) {
-            supplierName = selectedSupplier.supplier_name;
-        }
+        if (selectedSupplier) supplierName = selectedSupplier.supplier_name;
         
         const applyWithholdingTax = document.getElementById('apply-withholding-tax').checked;
         let withholdingTaxPercent = 0;
@@ -1571,37 +1492,22 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         }
         
         const withVAT = document.getElementById('vat-toggle').checked;
-        
         const discountPercent = parseFloat(document.getElementById('po-discount-percent').value) || 0;
         const discountAmount = parseFloat(document.getElementById('po-discount-amount').value) || 0;
         
-        let vehicleCode = null;
-        let vehicleBrand = null;
-        let vehicleModel = null;
-        let motorpoolCategory = null;
-        let motorpoolCategoryLabel = null;
+        let vehicleCode = null, vehicleBrand = null, vehicleModel = null;
         
-        const vehicleTypes = ['For Truck Repair and Maintenance', 'For Trailers', 'For Prime Movers'];
-        const isMotorpool = purchaseType === 'For Motorpool';
-        
-        if (vehicleTypes.includes(purchaseType)) {
+        if (purchaseType === 'For Truck Repair and Maintenance') {
+            // Multi-item + multi-truck: header-level vehicle fields stay null
+            vehicleCode = null;
+            vehicleBrand = null;
+            vehicleModel = null;
+        } else if (purchaseType === 'For Trailers' || purchaseType === 'For Prime Movers') {
             vehicleCode = document.getElementById('vehicle-code').value || null;
             vehicleBrand = document.getElementById('vehicle-brand').value || null;
             vehicleModel = document.getElementById('vehicle-model').value || null;
-        } else if (isMotorpool) {
-            vehicleCode = document.getElementById('vehicle-code').value || null;
-            vehicleBrand = document.getElementById('vehicle-brand').value || null;
-            vehicleModel = document.getElementById('vehicle-model').value || null;
-            motorpoolCategory = selectedMotorpoolCategory;
-            
-            const categoryLabels = {
-                'truck': 'Truck',
-                'trailer': 'Trailer',
-                'prime_mover': 'Prime Mover',
-                'customer': 'Customer'
-            };
-            motorpoolCategoryLabel = categoryLabels[motorpoolCategory] || motorpoolCategory;
         }
+        // For Motorpool / Office Supplies / Stock → all vehicle fields remain null
         
         const poData = {
             supplier_code: supplierCode,
@@ -1611,12 +1517,12 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             expected_delivery: document.getElementById('expected-delivery').value,
             payment_terms: document.getElementById('payment-terms').value,
             currency: document.getElementById('currency').value,
-            requested_by: document.getElementById('requested-by-employee').value,
             delivery_address: document.getElementById('delivery-address').value,
             delivery_mode: document.getElementById('delivery-mode').value,
             warranty: document.getElementById('warranty').value,
             remarks: document.getElementById('remarks').value,
             freight: parseFloat(document.getElementById('freight').value) || 0,
+            labor: parseFloat(document.getElementById('labor').value) || 0,
             subtotal: totals.subtotal,
             total_vat: totals.totalVAT,
             total_amount: totals.grand,
@@ -1630,129 +1536,131 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             vehicle_code: vehicleCode,
             vehicle_brand: vehicleBrand,
             vehicle_model: vehicleModel,
-            motorpool_category: motorpoolCategory,
-            motorpool_category_label: motorpoolCategoryLabel,
             items: []
         };
         
         document.querySelectorAll('#items-body tr').forEach(row => {
-            const itemSelect = row.querySelector('.item-select');
-            const selectedOption = itemSelect.options[itemSelect.selectedIndex];
-            
-            if (selectedOption && selectedOption.value) {
-                const qty = parseInt(row.querySelector('.qty-input').value) || 0;
-                const unitCost = parseFloat(row.querySelector('.price-input').value) || 0;
-                const discountPercent = parseFloat(row.querySelector('.discount-percent-input').value) || 0;
-                const discountAmount = parseFloat(row.querySelector('.discount-amount-input').value) || 0;
-                const partNumber = row.dataset.partNumber || '';
-                
-                let itemSubtotal = qty * unitCost;
-                let finalDiscount = discountAmount;
-                
-                if (discountPercent > 0) {
-                    finalDiscount = itemSubtotal * (discountPercent / 100);
-                }
-                
-                let discountedTotal = itemSubtotal - finalDiscount;
-                let withoutVAT, vatAmount;
-                
-                if (withVAT) {
-                    withoutVAT = discountedTotal / 1.12;
-                    vatAmount = discountedTotal - withoutVAT;
-                } else {
-                    withoutVAT = discountedTotal;
-                    vatAmount = 0;
-                }
-                
-                const fullText = selectedOption.text;
-                let itemName = fullText;
-                const partNumberMatch = fullText.match(/\([^)]*\)$/);
-                if (partNumberMatch) {
-                    itemName = fullText.replace(/\s*\([^)]*\)$/, '').trim();
-                }
-                const codeMatch = itemName.match(/^\[[^\]]*\]\s*/);
-                if (codeMatch) {
-                    itemName = itemName.replace(codeMatch[0], '').trim();
-                }
-                
-                poData.items.push({
-                    item_code: selectedOption.value,
-                    item_name: itemName,
-                    part_number: partNumber,
-                    unit_of_measure: row.querySelector('.unit-input').value,
-                    quantity: qty,
-                    unit_cost: unitCost,
-                    discount: finalDiscount,
-                    discount_amount: finalDiscount,
-                    without_vat: withoutVAT,
-                    vat_amount: vatAmount,
-                    total_cost: discountedTotal
-                });
+            const hidden = row.querySelector('.item-code-hidden');
+            const code = hidden ? hidden.value : '';
+            if (!code) return;
+
+            const item = allItemsData.find(i => i.item_code === code);
+            if (!item) return;
+
+            const qty = parseInt(row.querySelector('.qty-input').value) || 0;
+            const unitCost = parseFloat(row.querySelector('.price-input').value) || 0;
+            const discountPercentRow = parseFloat(row.querySelector('.discount-percent-input').value) || 0;
+            const discountAmountRow = parseFloat(row.querySelector('.discount-amount-input').value) || 0;
+            const partNumber = row.dataset.partNumber || '';
+
+            let itemSubtotal = qty * unitCost;
+            let finalDiscount = discountAmountRow;
+
+            if (discountPercentRow > 0) {
+                finalDiscount = itemSubtotal * (discountPercentRow / 100);
             }
+
+            let discountedTotal = itemSubtotal - finalDiscount;
+            let withoutVAT, vatAmount;
+
+            if (withVAT) {
+                withoutVAT = discountedTotal / 1.12;
+                vatAmount = discountedTotal - withoutVAT;
+            } else {
+                withoutVAT = discountedTotal;
+                vatAmount = 0;
+            }
+
+            // Per-item truck code for Truck Repair mode
+            let itemTruckCode = null;
+            if (purchaseType === 'For Truck Repair and Maintenance') {
+                const truckSelect = row.querySelector('.truck-assign-select');
+                itemTruckCode = truckSelect ? truckSelect.value : null;
+            }
+
+            // Per-item requested_by
+            const requestedBySelect = row.querySelector('.requested-by-select');
+            const requestedBy = requestedBySelect ? requestedBySelect.value : '';
+
+            poData.items.push({
+                item_code: item.item_code,
+                item_name: item.item_name,
+                part_number: partNumber,
+                unit_of_measure: item.unit_of_measure || row.querySelector('.unit-input').value,
+                quantity: qty,
+                unit_cost: unitCost,
+                discount: finalDiscount,
+                discount_amount: finalDiscount,
+                without_vat: withoutVAT,
+                vat_amount: vatAmount,
+                total_cost: discountedTotal,
+                truck_code: itemTruckCode,
+                requested_by: requestedBy
+            });
         });
         
         return poData;
     }
-    
+
     // ── Submit for Approval ──────────────────────────────────────────────────
     async function submitForApproval() {
         const supplierCode = document.getElementById('supplier-code-select').value;
         const purchaseType = document.getElementById('purchase-type').value;
         
-        if (!supplierCode) {
-            alert('Please select a supplier');
-            return;
-        }
+        if (!supplierCode) { alert('Please select a supplier'); return; }
+        if (!purchaseType) { alert('Please select a purchase type'); return; }
         
-        if (!purchaseType) {
-            alert('Please select a purchase type');
-            return;
-        }
-        
-        if (!document.getElementById('requested-by-employee').value) {
-            alert('Please select who requested this purchase order');
-            return;
-        }
-        
-        const vehicleTypes = ['For Truck Repair and Maintenance', 'For Trailers', 'For Prime Movers'];
-        const isMotorpool = purchaseType === 'For Motorpool';
-        
-        if (vehicleTypes.includes(purchaseType)) {
-            const vehicleCode = document.getElementById('vehicle-code').value;
-            if (!vehicleCode) {
-                const typeLabel = purchaseType === 'For Truck Repair and Maintenance' ? 'truck' :
-                                  purchaseType === 'For Trailers' ? 'trailer' : 'prime mover';
-                alert(`Please select a ${typeLabel} for this purchase order`);
-                return;
-            }
-        } else if (isMotorpool) {
-            if (!selectedMotorpoolCategory) {
-                alert('Please select a vehicle category for Motorpool');
-                return;
-            }
-            const vehicleCode = document.getElementById('vehicle-code').value;
-            if (!vehicleCode) {
-                alert('Please select a vehicle for this Motorpool purchase order');
-                return;
-            }
-        }
-        
-        let hasItems = false;
-        document.querySelectorAll('#items-body tr').forEach(row => {
-            const itemSelect = row.querySelector('.item-select');
-            if (itemSelect && itemSelect.value) {
-                hasItems = true;
+        // Collect rows that have an item selected
+        const itemRows = [];
+        document.querySelectorAll('#items-body tr').forEach((row, idx) => {
+            const hidden = row.querySelector('.item-code-hidden');
+            if (hidden && hidden.value) {
+                itemRows.push({ row, idx: idx + 1 });
             }
         });
         
-        if (!hasItems) {
+        if (itemRows.length === 0) {
             alert('Please add at least one item to the purchase order');
             return;
         }
         
-        if (!confirm('Are you sure you want to submit this Purchase Order?')) {
+        // Validate Requested By on every item row
+        const missingRequester = [];
+        itemRows.forEach(({ row, idx }) => {
+            const sel = row.querySelector('.requested-by-select');
+            if (!sel || !sel.value) missingRequester.push(idx);
+        });
+        if (missingRequester.length > 0) {
+            alert(`Please select Requested By for the following item row(s): ${missingRequester.join(', ')}`);
             return;
         }
+        
+        if (purchaseType === 'For Truck Repair and Maintenance') {
+            // Validate every item row has a truck assigned
+            const unassignedRows = [];
+            itemRows.forEach(({ row, idx }) => {
+                const truckSelect = row.querySelector('.truck-assign-select');
+                if (truckSelect && !truckSelect.value) {
+                    unassignedRows.push(idx);
+                }
+            });
+            
+            if (unassignedRows.length > 0) {
+                alert(`Please assign a truck to the following item row(s): ${unassignedRows.join(', ')}`);
+                return;
+            }
+            
+        } else if (purchaseType === 'For Trailers' || purchaseType === 'For Prime Movers') {
+            const vehicleCode = document.getElementById('vehicle-code').value;
+            if (!vehicleCode) {
+                const typeLabel = purchaseType === 'For Trailers' ? 'trailer' : 'prime mover';
+                alert(`Please select a ${typeLabel} for this purchase order`);
+                return;
+            }
+        }
+        // For Motorpool – no vehicle validation required
+        
+        if (!confirm('Are you sure you want to submit this Purchase Order?')) return;
         
         loadingModal.style.display = 'flex';
         
@@ -1761,14 +1669,11 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             
             const response = await fetch('purchase_order.php?action=save_po', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(poData)
             });
             
             const result = await response.json();
-            
             loadingModal.style.display = 'none';
             
             if (result.success) {
@@ -1793,7 +1698,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         loadCustomers(),
         loadEmployees()
     ]).then(() => {
-        // All data loaded
+        // Employees are loaded; populate any existing requested-by selects
+        refreshRequestedByColumns();
     });
 
     document.addEventListener('keydown', function(e) {

@@ -107,22 +107,21 @@ if ($result) {
 }
 
 // ============================================================
-// FETCH PER-INVOICE AGGREGATES (charge_amount, vat, discount, subtotal, balance)
-// Because one invoice can have multiple SOs, we sum across the rows
+// FETCH PER-INVOICE AGGREGATES (charge_amount, charge_vat, vat, discount, subtotal)
 // ============================================================
 $invoice_aggregates = []; // keyed by invoice_no
 
 if (!empty($service_invoices)) {
-    // Group rows by invoice_no and aggregate
     foreach ($service_invoices as $row) {
         $inv_no = $row['invoice_no'];
         if (!isset($invoice_aggregates[$inv_no])) {
             $invoice_aggregates[$inv_no] = [
                 'item_count'      => 0,
-                'subtotal'        => 0,   // sum of `amount` (net) across rows
+                'subtotal'        => 0,
                 'discount_total'  => 0,
                 'vat_total'       => 0,
-                'charge_total'    => 0,   // NEW: sum of `charge_amount`
+                'charge_total'    => 0,
+                'charge_vat_total'=> 0,
                 'total_amount'    => 0,
                 'amount_paid'     => floatval($row['amount_paid'] ?? 0),
                 'additional_fee'  => floatval($row['additional_fee'] ?? 0),
@@ -147,16 +146,60 @@ if (!empty($service_invoices)) {
         $invoice_aggregates[$inv_no]['subtotal']       += floatval($row['amount'] ?? 0);
         $invoice_aggregates[$inv_no]['discount_total'] += floatval($row['discount_amount'] ?? 0);
         $invoice_aggregates[$inv_no]['vat_total']      += floatval($row['vat_amount'] ?? 0);
-        $invoice_aggregates[$inv_no]['charge_total']   += floatval($row['charge_amount'] ?? 0); // NEW
+        $invoice_aggregates[$inv_no]['charge_total']   += floatval($row['charge_amount'] ?? 0);
         $invoice_aggregates[$inv_no]['total_amount']   += floatval($row['total_amount'] ?? 0);
         if (!empty($row['sales_order_no'])) {
             $invoice_aggregates[$inv_no]['sales_orders'][] = $row['sales_order_no'];
         }
-        // Prefer the latest non-empty values (invoice-level fields are the same across rows)
         if (!empty($row['payment_method'])) $invoice_aggregates[$inv_no]['payment_method'] = $row['payment_method'];
         if (!empty($row['payment_terms']))  $invoice_aggregates[$inv_no]['payment_terms']  = $row['payment_terms'];
         if (!empty($row['notes']))          $invoice_aggregates[$inv_no]['notes']          = $row['notes'];
     }
+
+    // Fetch special charges VAT from sales_order_special_charge for all SO numbers
+    $all_so_numbers = [];
+    foreach ($invoice_aggregates as $agg) {
+        foreach ($agg['sales_orders'] as $so) {
+            if ($so !== '') $all_so_numbers[$so] = true;
+        }
+    }
+    $all_so_numbers = array_keys($all_so_numbers);
+
+    $so_vat_map = []; // sales_order_no => vat sum
+    if (!empty($all_so_numbers)) {
+        $placeholders = implode(',', array_fill(0, count($all_so_numbers), '?'));
+        $stmt = $conn->prepare(
+            "SELECT sales_order_no, COALESCE(SUM(charge_vat), 0) AS vat_sum
+             FROM sales_order_special_charge
+             WHERE sales_order_no IN ($placeholders)
+             GROUP BY sales_order_no"
+        );
+        if ($stmt) {
+            $stmt->bind_param(str_repeat('s', count($all_so_numbers)), ...$all_so_numbers);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($r = $res->fetch_assoc()) {
+                $so_vat_map[$r['sales_order_no']] = floatval($r['vat_sum']);
+            }
+            $stmt->close();
+        }
+    }
+
+    // Attach charge_vat_total per invoice; fallback derive from totals if needed
+    foreach ($invoice_aggregates as $inv_no => &$agg) {
+        $vat_sum = 0.0;
+        foreach ($agg['sales_orders'] as $so) {
+            $vat_sum += $so_vat_map[$so] ?? 0.0;
+        }
+        if ($vat_sum <= 0) {
+            $implied = $agg['total_amount'] - $agg['subtotal'] - $agg['vat_total'] - $agg['charge_total'];
+            if ($implied > 0.009) {
+                $vat_sum = round($implied, 2);
+            }
+        }
+        $agg['charge_vat_total'] = $vat_sum;
+    }
+    unset($agg);
 }
 
 // Get unique statuses for filter dropdown
@@ -285,7 +328,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             <div class="page-header">
     <h1>📄 Service Invoices</h1>
     <div class="header-actions">
-        <!-- EXPORT BUTTON - Added here -->
         <a href="export_service_invoice_list.php<?php 
             $params = [];
             if ($search) $params[] = 'search=' . urlencode($search);
@@ -354,12 +396,13 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             <div class="table-container">
                 <?php if (count($service_invoices) > 0): ?>
                     <?php
-                    // Pre-compute totals for the footer
                     $grand_total_sum   = 0;
                     $grand_vat_sum     = 0;
                     $grand_disc_sum    = 0;
                     $grand_charge_sum  = 0;
+                    $grand_charge_vat_sum = 0;
                     $grand_paid_sum    = 0;
+                    $seen_invoices = [];
                     ?>
                     <table>
                         <thead>
@@ -430,13 +473,17 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                 $agg = $invoice_aggregates[$si['invoice_no']] ?? null;
                                 if (!$agg) continue;
 
-                                $grand_total_sum   += $agg['total_amount'];
-                                $grand_vat_sum     += $agg['vat_total'];
-                                $grand_disc_sum    += $agg['discount_total'];
-                                $grand_charge_sum  += $agg['charge_total'];
-                                $grand_paid_sum    += $agg['amount_paid'];
+                                // Avoid double-counting footer when multiple rows share same invoice_no
+                                if (!isset($seen_invoices[$si['invoice_no']])) {
+                                    $seen_invoices[$si['invoice_no']] = true;
+                                    $grand_total_sum      += $agg['total_amount'];
+                                    $grand_vat_sum        += $agg['vat_total'];
+                                    $grand_disc_sum       += $agg['discount_total'];
+                                    $grand_charge_sum     += $agg['charge_total'];
+                                    $grand_charge_vat_sum += $agg['charge_vat_total'];
+                                    $grand_paid_sum       += $agg['amount_paid'];
+                                }
 
-                                // Build SO list display (if multiple SOs on one invoice)
                                 $so_list_display = !empty($agg['sales_orders']) ? implode(', ', $agg['sales_orders']) : 'N/A';
                                 $so_count = count($agg['sales_orders']);
                             ?>
@@ -492,6 +539,11 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                             Charges: ₱<?php echo formatCurrency($agg['charge_total']); ?>
                                         </div>
                                         <?php endif; ?>
+                                        <?php if ($agg['charge_vat_total'] > 0): ?>
+                                        <div style="font-size:10px;color:#92400e;font-weight:600;">
+                                            Charges VAT: ₱<?php echo formatCurrency($agg['charge_vat_total']); ?>
+                                        </div>
+                                        <?php endif; ?>
                                         <?php if ($agg['amount_paid'] > 0): ?>
                                         <div style="font-size:10px;color:#16a34a;">
                                             Paid: ₱<?php echo formatCurrency($agg['amount_paid']); ?>
@@ -525,6 +577,9 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                             <?php if ($grand_charge_sum > 0): ?>
                             <span style="color:#b45309;">Total Special Charges: <strong>₱<?php echo formatCurrency($grand_charge_sum); ?></strong></span>
                             <?php endif; ?>
+                            <?php if ($grand_charge_vat_sum > 0): ?>
+                            <span style="color:#92400e;">Total Special Charges VAT: <strong>₱<?php echo formatCurrency($grand_charge_vat_sum); ?></strong></span>
+                            <?php endif; ?>
                             <?php if ($grand_paid_sum > 0): ?>
                             <span style="color:#16a34a;">Total Paid: <strong>₱<?php echo formatCurrency($grand_paid_sum); ?></strong></span>
                             <?php endif; ?>
@@ -545,7 +600,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
     <script>
         lucide.createIcons();
 
-        // Flash message auto-dismiss
         document.addEventListener('DOMContentLoaded', function() {
             const flash = document.getElementById('flash-message');
             if (flash) {
@@ -556,7 +610,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             }
         });
 
-        // User roles from PHP
         const userRoles = <?php echo json_encode($user_roles); ?>;
         const allowedPages = <?php echo json_encode($allowed_pages); ?>;
         const modal = document.getElementById('accessModal');
@@ -584,9 +637,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
         });
 
-        // ============================================================
-        // Detail Modal Functions
-        // ============================================================
         function showDetail(si) {
             const modal = document.getElementById('detailModal');
             const invoiceNo = document.getElementById('detailInvoiceNo');
@@ -594,35 +644,30 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             const paymentStatus = document.getElementById('detailPaymentStatus');
             const content = document.getElementById('detailContent');
 
-            // Set header
             invoiceNo.textContent = si.invoice_no;
             
-            // Set status badges
             status.className = 'badge-status ' + getStatusBadgeClass(si.status);
             status.textContent = si.status || 'N/A';
             
             paymentStatus.className = 'badge-status ' + getPaymentStatusBadgeClass(si.payment_status);
             paymentStatus.textContent = si.payment_status || 'N/A';
 
-            // Aggregated totals (from PHP)
             const agg = si.aggregated || {
                 item_count: 1,
                 subtotal: parseFloat(si.amount || 0),
                 discount_total: parseFloat(si.discount_amount || 0),
                 vat_total: parseFloat(si.vat_amount || 0),
                 charge_total: parseFloat(si.charge_amount || 0),
+                charge_vat_total: 0,
                 total_amount: parseFloat(si.total_amount || 0),
                 amount_paid: parseFloat(si.amount_paid || 0),
                 additional_fee: parseFloat(si.additional_fee || 0),
                 sales_orders: si.sales_order_no ? [si.sales_order_no] : []
             };
 
-            // Balance
             const balance = agg.total_amount - agg.amount_paid + agg.additional_fee;
 
-            // Build detail grid
             const fields = [
-                // Basic Info
                 { label: 'Sales Order #', value: agg.sales_orders.length > 0 ? agg.sales_orders.join(', ') : 'N/A', full: true, section: 'basic' },
                 { label: 'Customer Code', value: si.customer_code || 'N/A', full: false, section: 'basic' },
                 { label: 'Customer Name', value: si.customer_name || 'N/A', full: false, section: 'basic' },
@@ -632,34 +677,30 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 { label: 'Due Date', value: si.due_date ? formatDate(si.due_date) : 'N/A', full: false, section: 'basic' },
                 { label: 'Payment Terms', value: si.payment_terms || 'N/A', full: false, section: 'basic' },
                 
-                // Vehicle Details
                 { label: 'Truck Code', value: si.truck_code || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Plate Number', value: si.plate_number || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Brand', value: si.brand || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Model', value: si.model || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Unit', value: si.unit || 'N/A', full: false, section: 'vehicle' },
                 
-                // Destination
                 { label: 'Destination From', value: si.destination_from || 'N/A', full: true, section: 'destination' },
                 { label: 'Destination To', value: si.destination_to || 'N/A', full: true, section: 'destination' },
                 { label: 'Delivery Address', value: si.delivery_address || 'N/A', full: true, section: 'destination' },
                 
-                // Financial — aggregated across all SOs in this invoice
                 { label: 'Total Quantity', value: formatNumber(si.quantity), full: false, section: 'financial' },
                 { label: 'Subtotal (Net)', value: '₱' + formatCurrency(agg.subtotal), full: false, section: 'financial' },
                 { label: 'Discount', value: '₱' + formatCurrency(agg.discount_total), full: false, section: 'financial', highlight: agg.discount_total > 0 },
                 { label: 'VAT Amount', value: '₱' + formatCurrency(agg.vat_total), full: false, section: 'financial' },
                 { label: 'Special Charges', value: '₱' + formatCurrency(agg.charge_total), full: false, section: 'financial', highlight: agg.charge_total > 0 },
+                { label: 'Special Charges VAT', value: '₱' + formatCurrency(agg.charge_vat_total || 0), full: false, section: 'financial', highlight: (agg.charge_vat_total || 0) > 0 },
                 { label: 'Total Amount', value: '₱' + formatCurrency(agg.total_amount), full: false, section: 'financial', bold: true },
                 { label: 'Amount Paid', value: '₱' + formatCurrency(agg.amount_paid), full: false, section: 'financial', green: agg.amount_paid > 0 },
                 { label: 'Additional Fee', value: '₱' + formatCurrency(agg.additional_fee), full: false, section: 'financial', red: agg.additional_fee > 0 },
                 { label: 'Balance Due', value: '₱' + formatCurrency(Math.max(0, balance)), full: false, section: 'financial', red: balance > 0, bold: balance > 0 },
                 
-                // Payment
                 { label: 'Payment Method', value: si.payment_method || 'N/A', full: false, section: 'payment' },
                 { label: 'Paid At', value: si.paid_at ? formatDate(si.paid_at) : 'N/A', full: false, section: 'payment' },
                 
-                // Additional
                 { label: 'Notes', value: si.notes || 'N/A', full: true, section: 'notes' },
                 { label: 'Created By', value: si.created_by || 'N/A', full: false, section: 'audit' },
                 { label: 'Created Date', value: formatDateTime(si.created_date), full: false, section: 'audit' },
@@ -667,7 +708,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 { label: 'Updated At', value: si.updated_at ? formatDateTime(si.updated_at) : 'N/A', full: false, section: 'audit' }
             ];
 
-            // Section definitions
             const sections = {
                 basic:       { title: 'Basic Information',   order: 1 },
                 vehicle:     { title: 'Vehicle Details',     order: 2 },
@@ -678,18 +718,15 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 audit:       { title: 'Audit Information',   order: 7 }
             };
 
-            // Group fields by section
             const grouped = {};
             fields.forEach(f => {
                 if (!grouped[f.section]) grouped[f.section] = [];
                 grouped[f.section].push(f);
             });
 
-            // Build HTML
             let html = '';
             Object.keys(sections).forEach(sectionKey => {
                 if (grouped[sectionKey] && grouped[sectionKey].length > 0) {
-                    // Skip if all values are N/A
                     const hasValue = grouped[sectionKey].some(f => f.value !== 'N/A' && f.value !== '');
                     if (hasValue) {
                         html += `<div class="detail-section-title">${sections[sectionKey].title}</div>`;
@@ -722,14 +759,12 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             document.getElementById('detailModal').classList.remove('active');
         }
 
-        // Close modal on overlay click
         document.getElementById('detailModal').addEventListener('click', function(e) {
             if (e.target === this) {
                 closeDetailModal();
             }
         });
 
-        // Close modal with Escape key
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 const detailModal = document.getElementById('detailModal');
@@ -739,7 +774,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             }
         });
 
-        // Helper functions
         function getStatusBadgeClass(status) {
             const s = (status || '').toLowerCase();
             if (s.includes('completed') || s.includes('paid') || s.includes('approved')) return 'badge-success';

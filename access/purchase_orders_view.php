@@ -2,7 +2,7 @@
 // purchase_order_view.php
 session_start();
 require_once __DIR__ . '/../config/config.php';
-require_once __DIR__ . '/../config/access_control.php'; // Include centralized access control
+require_once __DIR__ . '/../config/access_control.php';
 date_default_timezone_set('Asia/Manila');
 
 if (!isset($_SESSION['user_id'])) {
@@ -15,13 +15,8 @@ $user_type  = $_SESSION['user_type'] ?? 'user';
 $username   = $_SESSION['username'] ?? 'Guest';
 $full_name = $_SESSION['full_name'] ?? $username;
 
-// Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
-
-// Define base role - if 'admin' exists, user is admin
 $is_admin = in_array('admin', $user_roles);
-
-// Check if user has access to purchase order page (admin or purchase_order_maker)
 $can_access_po = $is_admin || in_array('purchase_order_maker', $user_roles);
 
 if (!$can_access_po) {
@@ -36,61 +31,69 @@ if (!$can_access_po) {
 $role_display_name = getRoleDisplayName($user_roles);
 $current_page = basename($_SERVER['PHP_SELF']);
 
-// Get all distinct PO numbers (still needed to determine default selected PO)
+// Get all distinct PO numbers
 $po_numbers_query = $conn->query("SELECT DISTINCT po_number FROM purchase_order ORDER BY po_number DESC");
 $po_numbers = [];
 while ($row = $po_numbers_query->fetch_assoc()) {
     $po_numbers[] = $row['po_number'];
 }
 
-// Get selected PO number from URL (or default to latest)
 $selected_po = isset($_GET['po_number']) ? $_GET['po_number'] : (count($po_numbers) > 0 ? $po_numbers[0] : '');
 
-// Fetch PO details for the selected PO number
 $po_details = null;
 $po_items = [];
 $po_summary = null;
 $selected_requested_by = '';
+$unique_trucks = []; // Array to hold unique truck codes for multi-truck POs
+$unique_requesters = []; // Unique requested_by values across items
 
 if ($selected_po) {
-    // Get PO header info (using first row for summary)
-    $header_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '$selected_po' LIMIT 1");
+    $header_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '" . $conn->real_escape_string($selected_po) . "' LIMIT 1");
     $po_details = $header_query->fetch_assoc();
     
-    // Get all items for this PO
-    $items_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '$selected_po' ORDER BY id");
+    $items_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '" . $conn->real_escape_string($selected_po) . "' ORDER BY id");
     while ($row = $items_query->fetch_assoc()) {
         $po_items[] = $row;
+        
+        // Collect unique truck codes for multi-truck display
+        if (!empty($row['truck_code'])) {
+            $unique_trucks[$row['truck_code']] = true;
+        }
+        // Collect unique requesters (per-item requested_by)
+        if (!empty($row['requested_by'])) {
+            $unique_requesters[$row['requested_by']] = true;
+        }
     }
+    // Convert back to simple array
+    $unique_trucks = array_keys($unique_trucks);
+    $unique_requesters = array_keys($unique_requesters);
     
-    // Calculate summary from first row (discount/wht flags etc. are stored on every row)
     if (count($po_items) > 0) {
         $po_summary = [
             'subtotal' => $po_items[0]['subtotal'] ?? 0,
             'total_vat' => $po_items[0]['total_vat'] ?? 0,
             'freight' => $po_items[0]['freight'] ?? 0,
+            'labor' => $po_items[0]['labor'] ?? 0,
             'total_amount' => $po_items[0]['total_amount'] ?? 0,
             'withholding_tax_amount' => $po_items[0]['withholding_tax_amount'] ?? 0,
             'net_amount_due' => $po_items[0]['net_amount_due'] ?? 0,
             'with_vat' => $po_items[0]['with_vat'] ?? 1,
             'withholding_tax_percent' => $po_items[0]['withholding_tax_percent'] ?? 0,
-            // Discount fields
             'discount_percent' => $po_items[0]['discount_percent'] ?? 0,
             'discount_amount' => $po_items[0]['discount_amount'] ?? 0,
             'item_discount_amount' => $po_items[0]['item_discount_amount'] ?? 0
         ];
     }
     
-    // Get the requested_by value directly from the purchase_order table
+    // Header-level requested_by fallback; prefer unique list from items
     $selected_requested_by = $po_details['requested_by'] ?? '';
+    if (count($unique_requesters) === 1) {
+        $selected_requested_by = $unique_requesters[0];
+    } elseif (count($unique_requesters) > 1) {
+        $selected_requested_by = implode(', ', $unique_requesters);
+    }
 }
 
-// ─── CHANGED: helper to determine if the PO can be cancelled ─────────────
-// A PO cannot be cancelled once there is any payment or delivery progress.
-// Blocking conditions (checked case-insensitively):
-//   delivery_payment = Partially Paid  or  Fully Paid
-//   delivery_status  = Partially Received  or  Fully Received
-// Note: Cancelled / Late Delivery / Pending / N/A do NOT block cancellation.
 function isPurchaseOrderCancellable($delivery_status, $delivery_payment) {
     $ds = strtolower(trim((string)$delivery_status));
     $dp = strtolower(trim((string)$delivery_payment));
@@ -103,7 +106,6 @@ function isPurchaseOrderCancellable($delivery_status, $delivery_payment) {
 
     return true;
 }
-// ─── END CHANGED ─────────────────────────────────────────────────────────
 
 // Handle cancel / restore PO action
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'cancel_po') {
@@ -117,7 +119,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         exit;
     }
 
-    // Get current status + delivery info
     $stmt = $conn->prepare("SELECT status, delivery_status, delivery_payment FROM purchase_order WHERE po_number = ? LIMIT 1");
     $stmt->bind_param("s", $po_num);
     $stmt->execute();
@@ -135,7 +136,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $delivery_payment = $row['delivery_payment'] ?? 'Pending';
 
     if ($current_status === 'cancelled') {
-        // Restore to Created — always allowed
         $stmt = $conn->prepare("UPDATE purchase_order SET status = 'Created', cancelled_by = NULL, cancelled_at = NULL WHERE po_number = ?");
         $stmt->bind_param("s", $po_num);
         $new_status       = 'Created';
@@ -143,7 +143,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $cancelled_by_out = null;
         $cancelled_at_out = null;
     } else {
-        // ─── CHANGED: block cancellation if payment/delivery progress exists ───
         if (!isPurchaseOrderCancellable($delivery_status, $delivery_payment)) {
             echo json_encode([
                 'success' => false,
@@ -154,10 +153,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             ]);
             exit;
         }
-        // ─── END CHANGED ───
 
-        // Cancel the PO — use PHP-generated Asia/Manila timestamp
-        $cancelled_at = date('Y-m-d H:i:s'); // Asia/Manila
+        $cancelled_at = date('Y-m-d H:i:s');
         $stmt = $conn->prepare("UPDATE purchase_order SET status = 'Cancelled', cancelled_by = ?, cancelled_at = ? WHERE po_number = ?");
         $stmt->bind_param("sss", $cancelled_by, $cancelled_at, $po_num);
         $new_status       = 'Cancelled';
@@ -181,13 +178,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
-// Determine if the selected PO has already been printed
 $is_printed = false;
 if ($po_details && isset($po_details['print_status']) && strtolower($po_details['print_status']) === 'printed') {
     $is_printed = true;
 }
 
-// ─── CHANGED: compute cancellable flag for the selected PO (UI layer) ───
 $can_cancel_po = true;
 if ($po_details) {
     $can_cancel_po = isPurchaseOrderCancellable(
@@ -195,7 +190,11 @@ if ($po_details) {
         $po_details['delivery_payment'] ?? 'Pending'
     );
 }
-// ─── END CHANGED ─────────────────────────────────────────────────────────
+
+// Determine if this is a truck-repair style PO (has any truck_code on items)
+$is_truck_repair_po = count($unique_trucks) > 0;
+$show_truck_column = count($unique_trucks) > 0;
+$show_requested_by_column = true; // always show per-item requested by in items table
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -205,30 +204,51 @@ if ($po_details) {
     <title>Purchase Order View | Oncall Forwarding</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="../js/lucide.js"></script>
-    <!-- <link rel="stylesheet" href="css/purchase_order.css?v=<?= time(); ?>"> -->
     <link rel="stylesheet" href="css/po_view.css?v=<?= time(); ?>">
     <link rel="stylesheet" href="sidebar.css?v=<?= time(); ?>">
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
 
-    <!-- ─── CHANGED: styles for disabled cancel button ─── -->
     <style>
         .cancel-toggle-btn.is-disabled,
         .cancel-toggle-btn[disabled] {
             opacity: 0.55;
             cursor: not-allowed;
-            pointer-events: auto; /* allow the tooltip to show */
+            pointer-events: auto;
         }
         .cancel-toggle-btn.is-disabled:hover {
-            /* no hover lift when disabled */
             transform: none;
             box-shadow: none;
         }
+        
+        /* Style for the multi-truck summary pills */
+        .truck-pill {
+            display: inline-block;
+            background: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 4px;
+            margin-bottom: 4px;
+        }
+        .requester-pill {
+            display: inline-block;
+            background: #f0fdf4;
+            color: #166534;
+            border: 1px solid #bbf7d0;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 4px;
+            margin-bottom: 4px;
+        }
     </style>
-    <!-- ─── END CHANGED ─── -->
 </head>
 <body>
 
-<!-- Include Sidebar -->
 <?php include 'sidebar.php'; ?>
 
 <main class="main-content">
@@ -257,8 +277,6 @@ if ($po_details) {
                     New PO
                 </a>
 
-               
-                
                 <a href="#" 
                    class="print-btn <?= $is_printed ? 'is-reprint' : ''; ?>" 
                    id="printPOBtn" 
@@ -303,12 +321,8 @@ if ($po_details) {
                 </span>
                 <?php endif; ?>
                         <span class="po-tag"><?php echo htmlspecialchars($po_details['po_number']); ?></span>
-                        <!-- <span class="status-badge <?php echo strtolower($po_details['status'] ?? 'created'); ?>" id="po-status-badge">
-                            <?php echo htmlspecialchars($po_details['status'] ?? 'Created'); ?>
-                        </span> -->
 
                         <?php
-                        // ─── CHANGED: disable the Cancel button when PO cannot be cancelled ───
                         $cancel_disabled = (!$is_cancelled && !$can_cancel_po);
                         $cancel_title = $is_cancelled
                             ? 'Restore this purchase order'
@@ -358,18 +372,18 @@ if ($po_details) {
                         <span class="value"><?php echo $po_details['expected_delivery'] ? date('F d, Y', strtotime($po_details['expected_delivery'])) : 'N/A'; ?></span>
                     </div>
                     <div class="info-item">
-    <span class="label">Payment Terms</span>
-    <span class="value">
-        <?php 
-        $payment_terms = trim($po_details['payment_terms'] ?? '');
-        if ($payment_terms !== '' && is_numeric($payment_terms)) {
-            echo htmlspecialchars($payment_terms . ' DAYS');
-        } else {
-            echo htmlspecialchars($payment_terms);
-        }
-        ?>
-    </span>
-</div>
+                        <span class="label">Payment Terms</span>
+                        <span class="value">
+                            <?php 
+                            $payment_terms = trim($po_details['payment_terms'] ?? '');
+                            if ($payment_terms !== '' && is_numeric($payment_terms)) {
+                                echo htmlspecialchars($payment_terms . ' DAYS');
+                            } else {
+                                echo htmlspecialchars($payment_terms);
+                            }
+                            ?>
+                        </span>
+                    </div>
                     <div class="info-item">
                         <span class="label">Currency</span>
                         <span class="value"><?php echo htmlspecialchars($po_details['currency']); ?></span>
@@ -377,7 +391,15 @@ if ($po_details) {
                     <div class="info-item">
                         <span class="label">Requested By</span>
                         <span class="value">
-                            <?php echo htmlspecialchars($selected_requested_by ?: 'N/A'); ?>
+                            <?php if (count($unique_requesters) > 1): ?>
+                                <div style="margin-top:2px;">
+                                <?php foreach ($unique_requesters as $rb): ?>
+                                    <span class="requester-pill"><?php echo htmlspecialchars($rb); ?></span>
+                                <?php endforeach; ?>
+                                </div>
+                            <?php else: ?>
+                                <?php echo htmlspecialchars($selected_requested_by ?: 'N/A'); ?>
+                            <?php endif; ?>
                         </span>
                     </div>
                     <div class="info-item">
@@ -391,7 +413,28 @@ if ($po_details) {
                 </div>
                 
                 <!-- Truck Information (if applicable) -->
-                <?php if ($po_details['truck_code']): ?>
+                <?php if (!empty($unique_trucks)): ?>
+                <div class="truck-section" style="margin-top: 0; padding-top: 16px; border-top: 1px solid #f1f5f9;">
+                    <div class="truck-section-title">
+                        <i data-lucide="truck" style="width:16px;height:16px;"></i>
+                        Truck Information
+                    </div>
+                    <div class="truck-info-display-view">
+                        <?php if (count($unique_trucks) > 1): ?>
+                            <strong>Assigned Trucks:</strong> 
+                            <div style="margin-top: 6px;">
+                            <?php foreach($unique_trucks as $tc): ?>
+                                <span class="truck-pill"><?php echo htmlspecialchars($tc); ?></span>
+                            <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <strong>Truck Code:</strong> <?php echo htmlspecialchars($unique_trucks[0]); ?><br>
+                            <strong>Brand:</strong> <?php echo htmlspecialchars($po_details['brand'] ?? 'N/A'); ?><br>
+                            <strong>Model:</strong> <?php echo htmlspecialchars($po_details['model'] ?? 'N/A'); ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php elseif (!empty($po_details['truck_code'])): ?>
                 <div class="truck-section" style="margin-top: 0; padding-top: 16px; border-top: 1px solid #f1f5f9;">
                     <div class="truck-section-title">
                         <i data-lucide="truck" style="width:16px;height:16px;"></i>
@@ -419,12 +462,16 @@ if ($po_details) {
                 </div>
 
                 <div class="table-wrapper" style="overflow-x: auto;">
-                    <table id="items-table" style="min-width: 1400px;">
+                    <table id="items-table" style="min-width: 1500px;">
                         <thead>
                             <tr>
                                 <th>#</th>
                                 <th>Item Code</th>
                                 <th>Item / Description - Part Number</th>
+                                <?php if ($show_truck_column): ?>
+                                <th>Assigned Truck</th>
+                                <?php endif; ?>
+                                <th>Requested By</th>
                                 <th>Unit</th>
                                 <th>Qty Ordered</th>
                                 <th>Qty Received</th>
@@ -447,12 +494,10 @@ if ($po_details) {
                                 $qty_ordered = intval($item['qty_ordered']);
                                 $qty_received = intval($item['qty_received'] ?? 0);
                                 
-                                // Calculate item discount
                                 $item_subtotal = $unit_cost * $qty_ordered;
                                 $item_discount = floatval($item['item_discount_amount'] ?? 0);
                                 $item_discount_percent = 0;
                                 
-                                // Calculate discount percentage if possible
                                 if ($item_subtotal > 0 && $item_discount > 0) {
                                     $item_discount_percent = ($item_discount / $item_subtotal) * 100;
                                 }
@@ -460,7 +505,6 @@ if ($po_details) {
                                 $total_item_discount += $item_discount;
                                 $discounted_total = $item_subtotal - $item_discount;
                                 
-                                // Same logic as creation page: VAT portion of the discounted inclusive amount
                                 if ($with_vat) {
                                     $without_vat = $discounted_total / 1.12;
                                     $vat_amount  = $discounted_total - $without_vat;
@@ -482,6 +526,14 @@ if ($po_details) {
                                     }
                                     echo $displayName;
                                     ?>
+                                </td>
+                                <?php if ($show_truck_column): ?>
+                                <td style="font-weight:600; color:#1e40af;">
+                                    <?php echo htmlspecialchars($item['truck_code'] ?: '—'); ?>
+                                </td>
+                                <?php endif; ?>
+                                <td style="font-weight:500; color:#166534;">
+                                    <?php echo htmlspecialchars($item['requested_by'] ?: '—'); ?>
                                 </td>
                                 <td><?php echo htmlspecialchars($item['unit']); ?></td>
                                 <td style="text-align:center;"><?php echo $qty_ordered; ?></td>
@@ -531,9 +583,6 @@ if ($po_details) {
                 <div>
                     <div class="totals-box">
                         <?php 
-                        // ─── CORRECTED TOTALS – matches purchase_order.php creation logic exactly ──
-                        // Unit costs are VAT-inclusive when with_vat = 1.
-
                         $item_subtotal_before_discounts = 0;
                         $total_item_discount            = 0;
 
@@ -552,29 +601,26 @@ if ($po_details) {
                         $po_discount_amount      = floatval($po_summary['discount_amount'] ?? 0);
                         $po_discount_percent     = floatval($po_summary['discount_percent'] ?? 0);
                         $freight                 = floatval($po_summary['freight'] ?? 0);
+                        $labor                   = floatval($po_summary['labor'] ?? 0);
                         $withholding_tax_percent = floatval($po_summary['withholding_tax_percent'] ?? 0);
 
                         if ($with_vat) {
-                            // Subtotal (excl. tax) BEFORE PO discount
                             $subtotal = $discounted_inclusive / 1.12;
                         } else {
                             $subtotal = $discounted_inclusive;
                         }
 
-                        // PO discount is applied to the exclusive subtotal
                         $subtotal_after_po_discount = $subtotal - $po_discount_amount;
                         if ($subtotal_after_po_discount < 0) $subtotal_after_po_discount = 0;
 
-                        // VAT is recomputed on the discounted exclusive subtotal
                         if ($with_vat) {
                             $total_vat = $subtotal_after_po_discount * 0.12;
                         } else {
                             $total_vat = 0;
                         }
 
-                        $grand_total = $subtotal_after_po_discount + $total_vat + $freight;
+                        $grand_total = $subtotal_after_po_discount + $total_vat + $freight + $labor;
 
-                        // Withholding base = Subtotal (excl. tax) AFTER PO discount
                         $wht_base = $subtotal_after_po_discount;
                         if ($withholding_tax_percent > 0) {
                             $withholding_tax_amount = $wht_base * ($withholding_tax_percent / 100);
@@ -584,7 +630,6 @@ if ($po_details) {
                             $net_amount_due         = $grand_total;
                         }
 
-                        // Keep summary array in sync (used by the withholding section below)
                         $po_summary['subtotal']               = $subtotal;
                         $po_summary['total_vat']              = $total_vat;
                         $po_summary['total_amount']           = $grand_total;
@@ -624,6 +669,12 @@ if ($po_details) {
                             <span>Shipping / Freight</span>
                             <span>₱ <?php echo number_format($freight, 2); ?></span>
                         </div>
+                        <?php if ($labor > 0): ?>
+                        <div class="totals-row">
+                            <span>Labor</span>
+                            <span>₱ <?php echo number_format($labor, 2); ?></span>
+                        </div>
+                        <?php endif; ?>
                         <div class="totals-row total-final">
                             <span>Total PO Amount</span>&nbsp;
                             <span>₱ <?php echo number_format($grand_total, 2); ?></span>
@@ -719,12 +770,10 @@ if ($po_details) {
             const isCancelled = this.getAttribute('data-cancelled') === '1';
             const canCancel   = this.getAttribute('data-can-cancel') === '1';
 
-            // ─── CHANGED: front-line guard — never send the request if blocked ───
             if (!isCancelled && !canCancel) {
                 alert('This purchase order cannot be cancelled because it already has payment or delivery progress.');
                 return;
             }
-            // ─── END CHANGED ───
 
             const confirmMsg = isCancelled
                 ? 'Are you sure you want to restore this purchase order to "Created" status?'
@@ -732,10 +781,8 @@ if ($po_details) {
 
             if (!confirm(confirmMsg)) return;
 
-            // Determine who is cancelling (logged-in user's full name)
             const cancelledBy = <?php echo json_encode($username); ?>;
 
-            // Loading state
             const originalHTML = this.innerHTML;
             this.disabled = true;
             this.innerHTML = '<i data-lucide="loader" style="width:14px;height:14px;animation:spin 1s linear infinite;"></i><span>Processing...</span>';
@@ -753,10 +800,8 @@ if ($po_details) {
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    // Reload to reflect new status, cancelled_by, and cancelled_at
                     location.reload();
                 } else {
-                    // ─── CHANGED: nicer message for the blocked case ───
                     if (data.blocked) {
                         alert(data.message || 'This purchase order cannot be cancelled.');
                     } else {
@@ -765,7 +810,6 @@ if ($po_details) {
                     this.disabled = false;
                     this.innerHTML = originalHTML;
                     lucide.createIcons();
-                    // ─── END CHANGED ───
                 }
             })
             .catch(error => {
@@ -792,19 +836,16 @@ if ($po_details) {
                 return;
             }
             
-            // Warn if requested_by is empty (but allow printing)
             if (!requestedBy || requestedBy === '') {
                 if (!confirm('No "Requested By" person is set for this purchase order. Continue printing anyway?')) {
                     return;
                 }
             }
             
-            // Show loading state
             const originalText = this.innerHTML;
             this.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite;"></i> Loading...';
             lucide.createIcons();
             
-            // Update the print status via AJAX
             fetch('update_print_status.php', {
                 method: 'POST',
                 headers: {
@@ -814,11 +855,9 @@ if ($po_details) {
             })
             .then(response => response.json())
             .then(updateData => {
-                // Restore button text
                 this.innerHTML = originalText;
                 lucide.createIcons();
                 
-                // Open print page with reprint flag only (requested_by now comes from DB)
                 let printUrl = 'purchase_order_print.php?po_number=' + encodeURIComponent(poNumber);
                 if (isAlreadyPrinted) {
                     printUrl += '&is_reprint=1';
@@ -826,24 +865,16 @@ if ($po_details) {
                 window.open(printUrl, '_blank');
                 
                 if (updateData.success) {
-                    // Refresh the page to update print status badge & button label
-                    setTimeout(() => {
-                        location.reload();
-                    }, 500);
+                    setTimeout(() => { location.reload(); }, 500);
                 } else {
                     console.warn('Print status update failed: ' + (updateData.message || 'Unknown error'));
-                    // Still reload so badge reflects current state after re-check
-                    setTimeout(() => {
-                        location.reload();
-                    }, 500);
+                    setTimeout(() => { location.reload(); }, 500);
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                // Restore button text
                 this.innerHTML = originalText;
                 lucide.createIcons();
-                // Still open the print page even if status update fails
                 let printUrl = 'purchase_order_print.php?po_number=' + encodeURIComponent(poNumber);
                 if (isAlreadyPrinted) {
                     printUrl += '&is_reprint=1';

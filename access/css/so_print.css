@@ -18,7 +18,7 @@
             align-items: flex-start;
             border-bottom: 2px solid #333;
             padding-bottom: 15px;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
         }
         .header .company-info h1 {
             margin: 0;
@@ -32,7 +32,7 @@
         }
         .header .so-title h2 {
             margin-top: 5px;
-            font-size: 28px;
+            font-size: 20px;
             font-weight: bold;
             text-align: right;
             color: #333;
@@ -110,7 +110,7 @@
             font-weight: bold;
         }
         .totals-table .grand-total .value {
-            font-size: 18px;
+            font-size: 10px;
             color: #000;
             border-top: 2px solid #333;
             padding-top: 10px;

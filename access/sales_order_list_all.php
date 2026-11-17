@@ -16,18 +16,13 @@ $user_type = $_SESSION['user_type'] ?? 'user';
 $username  = $_SESSION['username'] ?? 'Guest';
 $full_name = $_SESSION['full_name'] ?? $username;
 
-// Convert comma-separated roles into an array
 $user_roles = array_map('trim', explode(',', $user_type));
-
-// Define base role
 $is_admin = in_array('admin', $user_roles);
 $base_user_type = $is_admin ? 'admin' : 'user';
 
-// Enforce page access
 $current_page = basename($_SERVER['PHP_SELF']);
 requireAccess($user_roles, $current_page, $allowed_pages);
 
-// Get filter parameters
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $status_filter = isset($_GET['status']) ? trim($_GET['status']) : '';
 $date_from = isset($_GET['date_from']) ? trim($_GET['date_from']) : '';
@@ -35,7 +30,6 @@ $date_to = isset($_GET['date_to']) ? trim($_GET['date_to']) : '';
 $sort_by = isset($_GET['sort_by']) ? trim($_GET['sort_by']) : 'order_date';
 $sort_order = isset($_GET['sort_order']) ? trim($_GET['sort_order']) : 'DESC';
 
-// Build query
 $query = "SELECT * FROM sales_order WHERE 1=1";
 $params = [];
 $types = "";
@@ -43,12 +37,7 @@ $types = "";
 if (!empty($search)) {
     $query .= " AND (sales_order_no LIKE ? OR customer_name LIKE ? OR customer_code LIKE ? OR truck_code LIKE ? OR plate_number LIKE ? OR driver LIKE ?)";
     $search_param = "%$search%";
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $params[] = $search_param;
+    $params = array_merge($params, [$search_param, $search_param, $search_param, $search_param, $search_param, $search_param]);
     $types .= "ssssss";
 }
 
@@ -70,7 +59,6 @@ if (!empty($date_to)) {
     $types .= "s";
 }
 
-// Add sorting
 $allowed_sort = ['sales_order_no', 'customer_name', 'order_date', 'delivery_date', 'status', 'amount', 'created_date'];
 if (!in_array($sort_by, $allowed_sort)) {
     $sort_by = 'order_date';
@@ -78,7 +66,6 @@ if (!in_array($sort_by, $allowed_sort)) {
 $sort_order = strtoupper($sort_order) === 'ASC' ? 'ASC' : 'DESC';
 $query .= " ORDER BY $sort_by $sort_order";
 
-// Execute query
 if (!empty($params)) {
     $stmt = $conn->prepare($query);
     if ($stmt) {
@@ -100,15 +87,15 @@ if ($result) {
 }
 
 // ============================================================
-// FETCH SPECIAL CHARGES FOR ALL DISPLAYED SOs (bulk query)
+// FETCH SPECIAL CHARGES (include charge_vat)
 // ============================================================
-$special_charges_map = []; // keyed by sales_order_no => array of charges
+$special_charges_map = [];
 
 if (!empty($sales_orders)) {
     $so_numbers = array_column($sales_orders, 'sales_order_no');
     if (!empty($so_numbers)) {
         $placeholders = implode(',', array_fill(0, count($so_numbers), '?'));
-        $charge_query = "SELECT sales_order_no, charge_kind, charge_amount 
+        $charge_query = "SELECT sales_order_no, charge_kind, charge_amount, charge_vat 
                          FROM sales_order_special_charge 
                          WHERE sales_order_no IN ($placeholders)";
         $stmt = $conn->prepare($charge_query);
@@ -123,50 +110,46 @@ if (!empty($sales_orders)) {
                 }
                 $special_charges_map[$so_no][] = [
                     'kind'   => $row['charge_kind'],
-                    'amount' => floatval($row['charge_amount'])
+                    'amount' => floatval($row['charge_amount']),
+                    'vat'    => ($row['charge_vat'] !== null && $row['charge_vat'] !== '') ? floatval($row['charge_vat']) : 0.0
                 ];
             }
         }
     }
 }
 
-// ============================================================
-// HELPER: Compute the full amount breakdown for a single SO
-// ============================================================
 function computeSOAmounts($so, $special_charges_map) {
     $so_no = $so['sales_order_no'] ?? '';
 
-    $net_amount      = floatval($so['amount'] ?? 0);          // already-discounted net
+    $net_amount      = floatval($so['amount'] ?? 0);
     $discount_amount = floatval($so['discount_amount'] ?? 0);
     $vat_percent     = floatval($so['vat_percent'] ?? 0);
 
-    // Reconstruct the gross subtotal (before discount)
     $gross_subtotal = $net_amount + $discount_amount;
-
-    // VAT is computed on the net amount (matches how save_so.php stored it)
     $vat_amount = $net_amount * ($vat_percent / 100);
 
-    // Special charges
     $special_total = 0;
+    $special_vat_total = 0;
     if (!empty($special_charges_map[$so_no])) {
         foreach ($special_charges_map[$so_no] as $sc) {
             $special_total += floatval($sc['amount'] ?? 0);
+            $special_vat_total += floatval($sc['vat'] ?? 0);
         }
     }
 
     return [
-        'gross_subtotal'  => $gross_subtotal,
-        'net_amount'      => $net_amount,
-        'discount_amount' => $discount_amount,
-        'vat_percent'     => $vat_percent,
-        'vat_amount'      => $vat_amount,
-        'special_total'   => $special_total,
-        'grand_total'     => $net_amount + $vat_amount + $special_total,
-        'special_items'   => $special_charges_map[$so_no] ?? []
+        'gross_subtotal'     => $gross_subtotal,
+        'net_amount'         => $net_amount,
+        'discount_amount'    => $discount_amount,
+        'vat_percent'        => $vat_percent,
+        'vat_amount'         => $vat_amount,
+        'special_total'      => $special_total,
+        'special_vat_total'  => $special_vat_total,
+        'grand_total'        => $net_amount + $vat_amount + $special_total + $special_vat_total,
+        'special_items'      => $special_charges_map[$so_no] ?? []
     ];
 }
 
-// Get unique statuses for filter dropdown
 $status_query = "SELECT DISTINCT status FROM sales_order WHERE status IS NOT NULL AND status != '' ORDER BY status";
 $status_result = $conn->query($status_query);
 $statuses = [];
@@ -176,7 +159,6 @@ if ($status_result) {
     }
 }
 
-// Function to get status badge color
 function getStatusBadgeClass($status) {
     $status = strtolower($status);
     if (strpos($status, 'completed') !== false || strpos($status, 'delivered') !== false || strpos($status, 'approved') !== false) {
@@ -192,7 +174,6 @@ function getStatusBadgeClass($status) {
     }
 }
 
-// Function to format currency
 function formatCurrency($amount) {
     if ($amount === null || $amount === '' || is_nan($amount)) return '0.00';
     return number_format((float)$amount, 2);
@@ -202,7 +183,6 @@ $role_display_name = getRoleDisplayName($user_roles);
 $success_msg = isset($_SESSION['login_success']) ? $_SESSION['login_success'] : null;
 if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -221,7 +201,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
         <div id="flash-message"><?php echo htmlspecialchars($success_msg); ?></div>
     <?php endif; ?>
 
-    <!-- Access Denied Modal -->
     <div id="accessModal" class="modal-overlay">
         <div class="access-modal">
             <i data-lucide="shield-off"></i>
@@ -231,7 +210,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
         </div>
     </div>
 
-    <!-- Detail Modal -->
     <div class="detail-modal-overlay" id="detailModal">
         <div class="detail-modal">
             <button class="modal-close" onclick="closeDetailModal()">&times;</button>
@@ -241,21 +219,16 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                     <span class="badge-status" id="detailStatus">Status</span>
                 </div>
             </div>
-            <div class="detail-grid" id="detailContent">
-                <!-- Populated by JavaScript -->
-            </div>
+            <div class="detail-grid" id="detailContent"></div>
         </div>
     </div>
 
-    <!-- Include Sidebar -->
     <?php include 'sidebar.php'; ?>
 
     <main class="main-content">
         <header>
             <div class="breadcrumb">
-                <span style="color:var(--text-muted); font-size:14px;">ONCALL FORWARDING CORPORATION / <a href="reports.php" style="color:red; font-weight:bold; font-size:16px; text-decoration:none;">
-    Reports
-</a> / <span style="color:red; font-weight: bold; font-size: 16px;">Sales Order List</span></span>
+                <span style="color:var(--text-muted); font-size:14px;">ONCALL FORWARDING CORPORATION / <a href="reports.php" style="color:red; font-weight:bold; font-size:16px; text-decoration:none;">Reports</a> / <span style="color:red; font-weight: bold; font-size: 16px;">Sales Order List</span></span>
             </div>
             <div class="user-profile">
                 <span class="badge"><?php echo htmlspecialchars($full_name); ?></span>
@@ -266,7 +239,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             <div class="page-header">
     <h1>📦 Sales Orders</h1>
     <div class="header-actions">
-        <!-- EXPORT BUTTON - Added here -->
         <a href="export_sales_order_list.php<?php 
             $params = [];
             if ($search) $params[] = 'search=' . urlencode($search);
@@ -276,22 +248,18 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             if ($sort_by) $params[] = 'sort_by=' . urlencode($sort_by);
             if ($sort_order) $params[] = 'sort_order=' . urlencode($sort_order);
             echo $params ? '?' . implode('&', $params) : '';
-        ?>" 
-           class="btn-export" 
-           title="Export to Excel">
+        ?>" class="btn-export" title="Export to Excel">
             <i data-lucide="file-spreadsheet"></i>
             <span>Export to Excel</span>
         </a>
     </div>
 </div>
 
-            <!-- Filters -->
             <form method="GET" class="filters-bar" id="filterForm">
                 <div class="search-wrapper">
                     <i data-lucide="search" style="width:18px;height:18px;color:var(--text-muted);"></i>
                     <input type="text" name="search" placeholder="Search SO #, Customer, Truck, Plate, Driver..." value="<?php echo htmlspecialchars($search); ?>">
                 </div>
-
                 <div class="filter-group">
                     <label>Status:</label>
                     <select name="status">
@@ -303,29 +271,25 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                         <?php endforeach; ?>
                     </select>
                 </div>
-
                 <div class="filter-group">
                     <label>From:</label>
                     <input type="date" name="date_from" value="<?php echo htmlspecialchars($date_from); ?>">
                 </div>
-
                 <div class="filter-group">
                     <label>To:</label>
                     <input type="date" name="date_to" value="<?php echo htmlspecialchars($date_to); ?>">
                 </div>
-
                 <button type="submit" class="btn btn-primary btn-sm">Apply</button>
                 <a href="sales_order_list_all.php" class="btn btn-outline btn-sm">Clear</a>
             </form>
 
-            <!-- Table -->
             <div class="table-container">
                 <?php if (count($sales_orders) > 0): ?>
                     <?php
-                    // Pre-compute totals for the footer
                     $grand_total_sum = 0;
                     $grand_vat_sum = 0;
                     $grand_charges_sum = 0;
+                    $grand_charges_vat_sum = 0;
                     ?>
                     <table>
                         <thead>
@@ -394,16 +358,13 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                         <tbody>
                             <?php foreach ($sales_orders as $so): 
                                 $calc = computeSOAmounts($so, $special_charges_map);
-                                $grand_total_sum   += $calc['grand_total'];
-                                $grand_vat_sum     += $calc['vat_amount'];
+                                $grand_total_sum += $calc['grand_total'];
+                                $grand_vat_sum += $calc['vat_amount'];
                                 $grand_charges_sum += $calc['special_total'];
+                                $grand_charges_vat_sum += $calc['special_vat_total'];
                             ?>
-                                <tr ondblclick='showDetail(<?php echo htmlspecialchars(json_encode(array_merge($so, [
-                                    "computed" => $calc
-                                ])), ENT_QUOTES, "UTF-8"); ?>)'>
-                                    <td>
-                                        <strong><?php echo htmlspecialchars($so['sales_order_no']); ?></strong>
-                                    </td>
+                                <tr ondblclick='showDetail(<?php echo htmlspecialchars(json_encode(array_merge($so, ["computed" => $calc])), ENT_QUOTES, "UTF-8"); ?>)'>
+                                    <td><strong><?php echo htmlspecialchars($so['sales_order_no']); ?></strong></td>
                                     <td>
                                         <span class="text-ellipsis" title="<?php echo htmlspecialchars($so['customer_name']); ?>">
                                             <?php echo htmlspecialchars($so['customer_name']); ?>
@@ -438,8 +399,16 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                                         <?php foreach ($calc['special_items'] as $item): ?>
                                         <div style="font-size:10px;color:#b45309;font-weight:400;padding-left:8px;">
                                             • <?php echo htmlspecialchars($item['kind']); ?>: ₱<?php echo formatCurrency($item['amount']); ?>
+                                            <?php if (!empty($item['vat'])): ?>
+                                            <span style="color:#92400e;">(+VAT ₱<?php echo formatCurrency($item['vat']); ?>)</span>
+                                            <?php endif; ?>
                                         </div>
                                         <?php endforeach; ?>
+                                        <?php endif; ?>
+                                        <?php if ($calc['special_vat_total'] > 0): ?>
+                                        <div style="font-size:10px;color:#92400e;font-weight:600;">
+                                            Charges VAT: ₱<?php echo formatCurrency($calc['special_vat_total']); ?>
+                                        </div>
                                         <?php endif; ?>
                                     </td>
                                     <td>
@@ -461,6 +430,9 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                             <?php if ($grand_charges_sum > 0): ?>
                             <span style="color:#b45309;">Total Special Charges: <strong>₱<?php echo formatCurrency($grand_charges_sum); ?></strong></span>
                             <?php endif; ?>
+                            <?php if ($grand_charges_vat_sum > 0): ?>
+                            <span style="color:#92400e;">Total Special Charges VAT: <strong>₱<?php echo formatCurrency($grand_charges_vat_sum); ?></strong></span>
+                            <?php endif; ?>
                             <span>Grand Total: <strong>₱<?php echo formatCurrency($grand_total_sum); ?></strong></span>
                         </span>
                     </div>
@@ -478,7 +450,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
     <script>
         lucide.createIcons();
 
-        // Flash message auto-dismiss
         document.addEventListener('DOMContentLoaded', function() {
             const flash = document.getElementById('flash-message');
             if (flash) {
@@ -489,7 +460,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             }
         });
 
-        // User roles from PHP
         const userRoles = <?php echo json_encode($user_roles); ?>;
         const allowedPages = <?php echo json_encode($allowed_pages); ?>;
         const modal = document.getElementById('accessModal');
@@ -497,43 +467,27 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
         function checkAccess(page) {
             if (userRoles.includes('admin')) return true;
             for (let role of userRoles) {
-                if (allowedPages[role] && allowedPages[role].includes(page)) {
-                    return true;
-                }
+                if (allowedPages[role] && allowedPages[role].includes(page)) return true;
             }
             modal.style.display = 'flex';
             return false;
         }
-
-        function closeModal() {
-            modal.style.display = 'none';
-        }
-
-        modal.addEventListener('click', function(e) {
-            if (e.target === modal) closeModal();
-        });
-
+        function closeModal() { modal.style.display = 'none'; }
+        modal.addEventListener('click', function(e) { if (e.target === modal) closeModal(); });
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
         });
 
-        // ============================================================
-        // Detail Modal Functions
-        // ============================================================
         function showDetail(so) {
             const modal = document.getElementById('detailModal');
             const orderNo = document.getElementById('detailOrderNo');
             const status = document.getElementById('detailStatus');
             const content = document.getElementById('detailContent');
 
-            // Set header
             orderNo.textContent = so.sales_order_no;
-            
-            // Set status badge
             status.className = 'badge-status ' + getStatusBadgeClass(so.status);
             status.textContent = so.status || 'N/A';
 
-            // Computed amounts (from PHP, or recompute)
             const calc = so.computed || {
                 gross_subtotal:  parseFloat(so.amount || 0) + parseFloat(so.discount_amount || 0),
                 net_amount:      parseFloat(so.amount || 0),
@@ -541,34 +495,27 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 vat_percent:     parseFloat(so.vat_percent || 0),
                 vat_amount:      parseFloat(so.amount || 0) * (parseFloat(so.vat_percent || 0) / 100),
                 special_total:   0,
+                special_vat_total: 0,
                 grand_total:     parseFloat(so.amount || 0) + (parseFloat(so.amount || 0) * (parseFloat(so.vat_percent || 0) / 100)),
                 special_items:   []
             };
 
-            // Build detail grid
             const fields = [
-                // Basic Info
                 { label: 'Customer Code', value: so.customer_code || 'N/A', full: false, section: 'basic' },
                 { label: 'Customer Name', value: so.customer_name || 'N/A', full: false, section: 'basic' },
                 { label: 'Order Date', value: formatDate(so.order_date), full: false, section: 'basic' },
                 { label: 'Delivery Date', value: so.delivery_date ? formatDate(so.delivery_date) : 'N/A', full: false, section: 'basic' },
                 { label: 'Payment Terms', value: so.payment_terms || 'N/A', full: false, section: 'basic' },
                 { label: 'VAT %', value: so.vat_percent ? so.vat_percent + '%' : '0%', full: false, section: 'basic' },
-                
-                // Vehicle Details
                 { label: 'Truck Code', value: so.truck_code || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Plate Number', value: so.plate_number || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Brand', value: so.brand || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Model', value: so.model || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Unit', value: so.unit || 'N/A', full: false, section: 'vehicle' },
                 { label: 'Driver', value: so.driver || 'N/A', full: false, section: 'vehicle' },
-                
-                // Route & Delivery
                 { label: 'Destination From', value: so.destination_from || 'N/A', full: true, section: 'destination' },
                 { label: 'Destination To', value: so.destination_to || 'N/A', full: true, section: 'destination' },
                 { label: 'Delivery Address', value: so.delivery_address || 'N/A', full: true, section: 'destination' },
-                
-                // Financial — now includes VAT & special charges
                 { label: 'Quantity', value: so.quantity || '0', full: false, section: 'financial' },
                 { label: 'Unit Price', value: '₱' + formatCurrency(so.unit_price), full: false, section: 'financial' },
                 { label: 'Subtotal (before discount)', value: '₱' + formatCurrency(calc.gross_subtotal), full: false, section: 'financial' },
@@ -577,16 +524,17 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 { label: 'Net Amount', value: '₱' + formatCurrency(calc.net_amount), full: false, section: 'financial' },
                 { label: 'VAT (' + (calc.vat_percent || 0) + '%)', value: '₱' + formatCurrency(calc.vat_amount), full: false, section: 'financial' },
                 { label: 'Special Charges', value: calc.special_total > 0 ? '₱' + formatCurrency(calc.special_total) : '₱0.00', full: false, section: 'financial', amount: true, highlight: calc.special_total > 0 },
+                { label: 'Special Charges VAT', value: (calc.special_vat_total || 0) > 0 ? '₱' + formatCurrency(calc.special_vat_total) : '₱0.00', full: false, section: 'financial', amount: true, highlight: (calc.special_vat_total || 0) > 0 },
                 { label: 'TOTAL AMOUNT DUE', value: '₱' + formatCurrency(calc.grand_total), full: false, section: 'financial', amount: true, bold: true },
             ];
 
-            // Special charge breakdown (if any)
             if (calc.special_items && calc.special_items.length > 0) {
                 fields.push({ label: '— Special Charges Breakdown —', value: '', full: true, section: 'financial', divider: true });
                 calc.special_items.forEach(item => {
+                    const vatPart = item.vat ? ' (+VAT ₱' + formatCurrency(item.vat) + ')' : '';
                     fields.push({
                         label: '• ' + item.kind,
-                        value: '₱' + formatCurrency(item.amount),
+                        value: '₱' + formatCurrency(item.amount) + vatPart,
                         full: false,
                         section: 'financial',
                         amount: true,
@@ -596,7 +544,6 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             }
 
             fields.push(
-                // Additional
                 { label: 'Notes', value: so.notes || 'N/A', full: true, section: 'notes' },
                 { label: 'Created By', value: so.created_by || 'N/A', full: false, section: 'audit' },
                 { label: 'Created Date', value: formatDateTime(so.created_date), full: false, section: 'audit' },
@@ -604,33 +551,28 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                 { label: 'Updated At', value: so.updated_at ? formatDateTime(so.updated_at) : 'N/A', full: false, section: 'audit' }
             );
 
-            // Section definitions
             const sections = {
-                basic:       { title: 'Basic Information',     order: 1 },
-                vehicle:     { title: 'Vehicle Details',       order: 2 },
-                destination: { title: 'Route & Delivery',      order: 3 },
-                financial:   { title: 'Financial Details',     order: 4 },
-                notes:       { title: 'Additional Notes',      order: 5 },
-                audit:       { title: 'Audit Information',     order: 6 }
+                basic:       { title: 'Basic Information' },
+                vehicle:     { title: 'Vehicle Details' },
+                destination: { title: 'Route & Delivery' },
+                financial:   { title: 'Financial Details' },
+                notes:       { title: 'Additional Notes' },
+                audit:       { title: 'Audit Information' }
             };
 
-            // Group fields by section
             const grouped = {};
             fields.forEach(f => {
                 if (!grouped[f.section]) grouped[f.section] = [];
                 grouped[f.section].push(f);
             });
 
-            // Build HTML
             let html = '';
             Object.keys(sections).forEach(sectionKey => {
                 if (grouped[sectionKey] && grouped[sectionKey].length > 0) {
-                    // Skip if all values are N/A
                     const hasValue = grouped[sectionKey].some(f => f.value !== 'N/A' && f.value !== '');
                     if (hasValue) {
                         html += `<div class="detail-section-title">${sections[sectionKey].title}</div>`;
                         grouped[sectionKey].forEach(f => {
-                            // Handle divider
                             if (f.divider) {
                                 html += `<div class="detail-divider" style="grid-column:1/-1;margin:10px 0 6px;border-top:1px dashed #e2e8f0;padding-top:6px;font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">${f.label}</div>`;
                                 return;
@@ -659,24 +601,17 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
             document.getElementById('detailModal').classList.remove('active');
         }
 
-        // Close modal on overlay click
         document.getElementById('detailModal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeDetailModal();
-            }
+            if (e.target === this) closeDetailModal();
         });
 
-        // Close modal with Escape key
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 const detailModal = document.getElementById('detailModal');
-                if (detailModal.classList.contains('active')) {
-                    closeDetailModal();
-                }
+                if (detailModal.classList.contains('active')) closeDetailModal();
             }
         });
 
-        // Helper functions
         function getStatusBadgeClass(status) {
             const s = (status || '').toLowerCase();
             if (s.includes('completed') || s.includes('delivered') || s.includes('approved')) return 'badge-success';

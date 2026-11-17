@@ -30,6 +30,15 @@ requireAccess($user_roles, $current_page, $allowed_pages, 'home.php');
 // Role display name - now using centralized function
 $role_display_name = getRoleDisplayName($user_roles);
 
+// Flash message from previous successful save
+$message = '';
+$message_type = '';
+if (isset($_SESSION['flash_message'])) {
+    $message = $_SESSION['flash_message'];
+    $message_type = $_SESSION['flash_type'] ?? 'success';
+    unset($_SESSION['flash_message'], $_SESSION['flash_type']);
+}
+
 // Generate next trailer code (TRL-001, TRL-002, ...)
 $next_code = 'TRL-001';
 $code_query = "SELECT trailer_code 
@@ -60,10 +69,12 @@ function uppercaseFields($data) {
     return $data;
 }
 
-// Handle Add Trailer
-$message = '';
-$message_type = '';
+// Convert empty string to NULL (for decimal/date columns)
+function nullIfEmpty($value) {
+    return ($value === '' || $value === null) ? null : $value;
+}
 
+// Handle Add Trailer
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trailer'])) {
     $fields = [
         'trailer_code'        => trim($_POST['trailer_code'] ?? ''),
@@ -73,12 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trailer'])) {
         'model'               => trim($_POST['model'] ?? ''),
         'color'               => trim($_POST['color'] ?? ''),
         'vin'                 => trim($_POST['vin'] ?? ''),
-        'length'              => trim($_POST['length'] ?? ''),
-        'width'               => trim($_POST['width'] ?? ''),
-        'height'              => trim($_POST['height'] ?? ''),
-        'weight_kg'           => trim($_POST['weight_kg'] ?? ''),
-        'max_capacity_kg'     => trim($_POST['max_capacity_kg'] ?? ''),
-        'purchase_date'       => trim($_POST['purchase_date'] ?? ''),
+        'length'              => nullIfEmpty(trim($_POST['length'] ?? '')),
+        'width'               => nullIfEmpty(trim($_POST['width'] ?? '')),
+        'height'              => nullIfEmpty(trim($_POST['height'] ?? '')),
+        'weight_kg'           => nullIfEmpty(trim($_POST['weight_kg'] ?? '')),
+        'max_capacity_kg'     => nullIfEmpty(trim($_POST['max_capacity_kg'] ?? '')),
+        'purchase_date'       => nullIfEmpty(trim($_POST['purchase_date'] ?? '')),
         'status'              => trim($_POST['status'] ?? 'Active'),
         'notes'               => trim($_POST['notes'] ?? ''),
     ];
@@ -86,8 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trailer'])) {
     // Apply uppercase transformation to text fields
     $fields = uppercaseFields($fields);
 
-    // Required fields
-    $required = ['trailer_code', 'plate_number', 'manufacturer', 'model'];
+    // Required fields - ONLY trailer_code and plate_number
+    $required = ['trailer_code', 'plate_number'];
     $errors = [];
 
     foreach ($required as $field) {
@@ -124,7 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trailer'])) {
 
             $stmt = mysqli_prepare($conn, $insert_query);
             mysqli_stmt_bind_param(
-                $stmt, "sssssssdddsssssss",
+                $stmt, "sssssssddddssssss",
                 $fields['trailer_code'],
                 $fields['plate_number'],
                 $fields['trailer_type'],
@@ -145,8 +156,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_trailer'])) {
             );
 
             if (mysqli_stmt_execute($stmt)) {
-                $message = "Trailer <strong>" . htmlspecialchars($fields['plate_number']) . "</strong> registered successfully!";
-                $message_type = 'success';
+                // Success → store flash message and redirect (PRG pattern)
+                $_SESSION['flash_message'] = "Trailer <strong>" . htmlspecialchars($fields['plate_number']) . "</strong> registered successfully!";
+                $_SESSION['flash_type'] = 'success';
+                mysqli_stmt_close($stmt);
+                mysqli_stmt_close($check_stmt);
+                header("Location: trailers.php");
+                exit;
             } else {
                 $message = "Database error: " . mysqli_error($conn);
                 $message_type = 'error';
@@ -168,12 +184,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_trailer'])) {
         'model'               => trim($_POST['model'] ?? ''),
         'color'               => trim($_POST['color'] ?? ''),
         'vin'                 => trim($_POST['vin'] ?? ''),
-        'length'              => trim($_POST['length'] ?? ''),
-        'width'               => trim($_POST['width'] ?? ''),
-        'height'              => trim($_POST['height'] ?? ''),
-        'weight_kg'           => trim($_POST['weight_kg'] ?? ''),
-        'max_capacity_kg'     => trim($_POST['max_capacity_kg'] ?? ''),
-        'purchase_date'       => trim($_POST['purchase_date'] ?? ''),
+        'length'              => nullIfEmpty(trim($_POST['length'] ?? '')),
+        'width'               => nullIfEmpty(trim($_POST['width'] ?? '')),
+        'height'              => nullIfEmpty(trim($_POST['height'] ?? '')),
+        'weight_kg'           => nullIfEmpty(trim($_POST['weight_kg'] ?? '')),
+        'max_capacity_kg'     => nullIfEmpty(trim($_POST['max_capacity_kg'] ?? '')),
+        'purchase_date'       => nullIfEmpty(trim($_POST['purchase_date'] ?? '')),
         'status'              => trim($_POST['status'] ?? 'Active'),
         'notes'               => trim($_POST['notes'] ?? ''),
     ];
@@ -181,8 +197,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_trailer'])) {
     // Apply uppercase transformation to text fields
     $fields = uppercaseFields($fields);
 
-    // Required fields
-    $required = ['plate_number', 'manufacturer', 'model'];
+    // Required fields - ONLY plate_number
+    $required = ['plate_number'];
     $errors = [];
 
     foreach ($required as $field) {
@@ -221,7 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_trailer'])) {
 
         $stmt = mysqli_prepare($conn, $update_query);
         mysqli_stmt_bind_param(
-            $stmt, "ssssssdddsssssssi",
+            $stmt, "ssssssddddssssssi",
             $fields['plate_number'],
             $fields['trailer_type'],
             $fields['manufacturer'],
@@ -470,13 +486,13 @@ $result = mysqli_query($conn, $query);
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Manufacturer <span class="required">*</span></label>
-                        <input type="text" name="manufacturer" required placeholder="Isuzu, Hino, Fuso...">
+                        <label>Manufacturer</label>
+                        <input type="text" name="manufacturer" placeholder="Isuzu, Hino, Fuso...">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Model <span class="required">*</span></label>
-                        <input type="text" name="model" required placeholder="Elf, Forward, Super Great...">
+                        <label>Model</label>
+                        <input type="text" name="model" placeholder="Elf, Forward, Super Great...">
                     </div>
 
                     <div class="form-group col-2">
@@ -594,13 +610,13 @@ $result = mysqli_query($conn, $query);
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Manufacturer <span class="required">*</span></label>
-                        <input type="text" name="manufacturer" id="edit_manufacturer" required placeholder="Isuzu, Hino, Fuso...">
+                        <label>Manufacturer</label>
+                        <input type="text" name="manufacturer" id="edit_manufacturer" placeholder="Isuzu, Hino, Fuso...">
                     </div>
 
                     <div class="form-group col-2">
-                        <label>Model <span class="required">*</span></label>
-                        <input type="text" name="model" id="edit_model" required placeholder="Elf, Forward, Super Great...">
+                        <label>Model</label>
+                        <input type="text" name="model" id="edit_model" placeholder="Elf, Forward, Super Great...">
                     </div>
 
                     <div class="form-group col-2">

@@ -1,154 +1,406 @@
 <?php
 // save_so.php
+
 session_start();
 
 require_once __DIR__ . '/../config/config.php';
 
-header('Content-Type: application/json');
+header('Content-Type: application/json; charset=utf-8');
 
+date_default_timezone_set('Asia/Manila');
+
+// ============================================================
+// HELPER: Return JSON response
+// ============================================================
+function jsonResponse($success, $message, $extra = [])
+{
+    echo json_encode(
+        array_merge([
+            'success' => $success,
+            'message' => $message
+        ], $extra),
+        JSON_UNESCAPED_UNICODE
+    );
+    exit;
+}
+
+// ============================================================
+// AUTHENTICATION
+// ============================================================
 if (!isset($_SESSION['user_id'])) {
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
+    jsonResponse(false, 'Unauthorized');
 }
 
-// Get raw POST data
-$input = json_decode(file_get_contents('php://input'), true);
+// ============================================================
+// READ JSON INPUT
+// ============================================================
+$rawInput = file_get_contents('php://input');
+$input = json_decode($rawInput, true);
 
-if (!$input) {
-    echo json_encode(['success' => false, 'message' => 'Invalid input data']);
-    exit;
+if (!is_array($input)) {
+    jsonResponse(false, 'Invalid input data.');
 }
 
-// Generate SO Number: SO-YYYY-#####
-$today = date('Y');
-$prefix = "SO-{$today}-";
+// ============================================================
+// PREPARE DATA
+// Prepared statements preserve text values such as "20 Footer".
+// ============================================================
+$customer_code = trim((string)($input['customer_code'] ?? ''));
+$customer_name = trim((string)($input['customer_name'] ?? ''));
+$truck_code    = trim((string)($input['truck_code'] ?? ''));
+$plate_number  = trim((string)($input['plate_number'] ?? ''));
+$brand         = trim((string)($input['brand'] ?? ''));
+$model         = trim((string)($input['model'] ?? ''));
+$truck_type    = trim((string)($input['truck_type'] ?? ''));
 
-$stmt = $conn->prepare("SELECT COUNT(*) as cnt FROM sales_order WHERE sales_order_no LIKE CONCAT(?, '%')");
-$stmt->bind_param('s', $prefix);
-$stmt->execute();
-$res = $stmt->get_result();
-$row = $res->fetch_assoc();
-$next_seq = ($row['cnt'] ?? 0) + 1;
-$so_no = $prefix . sprintf('%05d', $next_seq);
-$stmt->close();
+// FOOTER: preserve the complete text value.
+// The frontend now sends the COMBO's footer (from customer_pricing),
+// not the truck's own footer, so this is the authoritative value.
+// Examples: "20 Footer", "40 Footer", "20", "40", or "" (no footer)
+$footer = trim((string)($input['footer'] ?? ''));
+$footer = ($footer === '') ? null : $footer;
 
-// Prepare data for insertion
-$customer_code    = $conn->real_escape_string($input['customer_code'] ?? '');
-$customer_name    = $conn->real_escape_string($input['customer_name'] ?? '');
-$truck_code       = $conn->real_escape_string($input['truck_code'] ?? '');
-$plate_number     = $conn->real_escape_string($input['plate_number'] ?? '');
-$brand            = $conn->real_escape_string($input['brand'] ?? '');
-$model            = $conn->real_escape_string($input['model'] ?? '');
-$truck_type       = $conn->real_escape_string($input['truck_type'] ?? '');
-$unit             = $conn->real_escape_string($input['unit'] ?? '');
-$destination_from = $conn->real_escape_string($input['destination_from'] ?? '');
-$destination_to   = $conn->real_escape_string($input['destination_to'] ?? '');
-$order_date       = !empty($input['order_date']) ? $input['order_date'] : null;
-$delivery_date    = !empty($input['delivery_date']) ? $input['delivery_date'] : null;
-$delivery_address = $conn->real_escape_string($input['delivery_address'] ?? '');
-$payment_terms    = $conn->real_escape_string($input['payment_terms'] ?? '');
-$notes            = $conn->real_escape_string($input['notes'] ?? '');
-$driver           = $conn->real_escape_string($input['driver'] ?? '');
-$status           = 'Created';
-$created_by       = $_SESSION['username'] ?? 'System';
-$created_date     = (new DateTime('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d H:i:s');
+$unit             = trim((string)($input['unit'] ?? ''));
+$destination_from = trim((string)($input['destination_from'] ?? ''));
+$destination_to   = trim((string)($input['destination_to'] ?? ''));
 
-// Numeric values
-$vat_percent      = 12.00;
-$unit_price       = floatval($input['unit_price'] ?? 0);
-$discount_percent = floatval($input['discount_percent'] ?? 0);
-$amount           = floatval($input['amount'] ?? 0);
-$discount_amount  = floatval($input['discount_amount'] ?? 0);
-$quantity         = floatval($input['quantity'] ?? 0);
+$order_date = !empty($input['order_date'])
+    ? $input['order_date']
+    : null;
 
-// Start transaction
+$delivery_date = !empty($input['delivery_date'])
+    ? $input['delivery_date']
+    : null;
+
+$delivery_address = trim((string)($input['delivery_address'] ?? ''));
+$payment_terms    = trim((string)($input['payment_terms'] ?? ''));
+$notes            = trim((string)($input['notes'] ?? ''));
+$driver           = trim((string)($input['driver'] ?? ''));
+
+$status     = 'Created';
+$created_by = $_SESSION['username'] ?? 'System';
+
+$created_date = (new DateTime(
+    'now',
+    new DateTimeZone('Asia/Manila')
+))->format('Y-m-d H:i:s');
+
+// ============================================================
+// DELIVERY RECEIPT
+// Normalize to "DR# - XXXXX"
+// ============================================================
+$delivery_receipt_raw = trim(
+    (string)($input['delivery_receipt'] ?? '')
+);
+
+if ($delivery_receipt_raw !== '') {
+    $dr_value = preg_replace(
+        '/^DR#\s*-\s*/i',
+        '',
+        $delivery_receipt_raw
+    );
+
+    $dr_value = trim($dr_value);
+
+    $delivery_receipt = ($dr_value !== '')
+        ? 'DR# - ' . $dr_value
+        : '';
+} else {
+    $delivery_receipt = '';
+}
+
+// ============================================================
+// VAT (main order)
+// Checked   = 12
+// Unchecked = NULL
+// ============================================================
+if (array_key_exists('vat_enabled', $input)) {
+    $vat_enabled = filter_var(
+        $input['vat_enabled'],
+        FILTER_VALIDATE_BOOLEAN
+    );
+} else {
+    // Backward compatibility with older frontend
+    $vat_enabled = (float)($input['vat_percent'] ?? 0) > 0;
+}
+
+$vat_percent = $vat_enabled ? 12.00 : null;
+
+// ============================================================
+// SPECIAL CHARGES VAT (optional, independent of main VAT)
+// Checked   = 12.00 in special_charges_vat
+// Unchecked = NULL
+// ============================================================
+if (array_key_exists('special_charges_vat_enabled', $input)) {
+    $special_charges_vat_enabled = filter_var(
+        $input['special_charges_vat_enabled'],
+        FILTER_VALIDATE_BOOLEAN
+    );
+} else {
+    $special_charges_vat_enabled = false;
+}
+
+$special_charges_vat = $special_charges_vat_enabled ? 12.00 : null;
+
+// ============================================================
+// NUMERIC VALUES
+// ============================================================
+$unit_price       = (float)($input['unit_price'] ?? 0);
+$discount_percent = (float)($input['discount_percent'] ?? 0);
+$amount           = (float)($input['amount'] ?? 0);
+$discount_amount  = (float)($input['discount_amount'] ?? 0);
+$quantity         = (float)($input['quantity'] ?? 0);
+
+// ============================================================
+// GENERATE SALES ORDER NUMBER
+// SO-YYYY-00001
+// ============================================================
 $conn->begin_transaction();
 
 try {
-    // Insert sales order
-    $sql = "INSERT INTO sales_order (
-                sales_order_no, customer_code, customer_name, truck_code, plate_number, 
-                brand, model, truck_type, unit, destination_from, destination_to, 
-                order_date, delivery_date, delivery_address, payment_terms, vat_percent, 
-                unit_price, discount_percent, amount, discount_amount, quantity, 
-                notes, status, created_by, created_date, driver
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    // Lock BOTH tables that will be written to.
+    // Under LOCK TABLES you can only touch the tables listed here.
+    $lockResult = $conn->query(
+        'LOCK TABLES sales_order WRITE, sales_order_special_charge WRITE'
+    );
+
+    if (!$lockResult) {
+        throw new Exception(
+            'Unable to lock tables: ' . $conn->error
+        );
+    }
+
+    $year   = date('Y');
+    $prefix = "SO-{$year}-";
+
+    $numberSql = "
+        SELECT COALESCE(
+            MAX(CAST(SUBSTRING(sales_order_no, " . (strlen($prefix) + 1) . ") AS UNSIGNED)),
+            0
+        ) AS max_seq
+        FROM sales_order
+        WHERE sales_order_no LIKE CONCAT(?, '%')
+    ";
+
+    $numberStmt = $conn->prepare($numberSql);
+
+    if (!$numberStmt) {
+        throw new Exception(
+            'Unable to prepare sales order number query: ' . $conn->error
+        );
+    }
+
+    $numberStmt->bind_param('s', $prefix);
+
+    if (!$numberStmt->execute()) {
+        throw new Exception(
+            'Unable to generate sales order number: ' . $numberStmt->error
+        );
+    }
+
+    $numberResult = $numberStmt->get_result();
+    $numberRow    = $numberResult->fetch_assoc();
+
+    $next_seq = ((int)($numberRow['max_seq'] ?? 0)) + 1;
+    $so_no    = $prefix . sprintf('%05d', $next_seq);
+
+    $numberStmt->close();
+
+    // ========================================================
+    // INSERT SALES ORDER
+    // 29 columns = 29 placeholders
+    //
+    // vat_percent and special_charges_vat bound as 's' so NULL
+    // is preserved reliably. MySQL casts the string "12.00"
+    // correctly into DECIMAL and keeps NULL as NULL.
+    // ========================================================
+    $sql = "
+        INSERT INTO sales_order (
+            sales_order_no,
+            customer_code,
+            customer_name,
+            truck_code,
+            plate_number,
+            brand,
+            model,
+            truck_type,
+            footer,
+            unit,
+            destination_from,
+            destination_to,
+            order_date,
+            delivery_date,
+            delivery_address,
+            payment_terms,
+            vat_percent,
+            special_charges_vat,
+            unit_price,
+            discount_percent,
+            amount,
+            discount_amount,
+            quantity,
+            notes,
+            status,
+            created_by,
+            created_date,
+            driver,
+            delivery_receipt_no
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+    ";
 
     $stmt = $conn->prepare($sql);
 
     if (!$stmt) {
-        throw new Exception('Database error: ' . $conn->error);
+        throw new Exception(
+            'Unable to prepare sales order insert: ' . $conn->error
+        );
     }
 
+    // Bind as string so NULL is sent correctly
+    $vat_param                 = ($vat_percent === null) ? null : (string)$vat_percent;
+    $special_charges_vat_param = ($special_charges_vat === null) ? null : (string)$special_charges_vat;
+
     $stmt->bind_param(
-        'sssssssssssssssddddddsssss',
-        $so_no, $customer_code, $customer_name, $truck_code, $plate_number,
-        $brand, $model, $truck_type, $unit, $destination_from, $destination_to,
-        $order_date, $delivery_date, $delivery_address, $payment_terms, $vat_percent,
-        $unit_price, $discount_percent, $amount, $discount_amount, $quantity,
-        $notes, $status, $created_by, $created_date, $driver
+        'ssssssssssssssssssdddddssssss',
+        $so_no,
+        $customer_code,
+        $customer_name,
+        $truck_code,
+        $plate_number,
+        $brand,
+        $model,
+        $truck_type,
+        $footer,
+        $unit,
+        $destination_from,
+        $destination_to,
+        $order_date,
+        $delivery_date,
+        $delivery_address,
+        $payment_terms,
+        $vat_param,
+        $special_charges_vat_param,
+        $unit_price,
+        $discount_percent,
+        $amount,
+        $discount_amount,
+        $quantity,
+        $notes,
+        $status,
+        $created_by,
+        $created_date,
+        $driver,
+        $delivery_receipt
     );
 
     if (!$stmt->execute()) {
-        throw new Exception('Error saving order: ' . $stmt->error);
+        throw new Exception(
+            'Error saving sales order: ' . $stmt->error
+        );
     }
+
     $stmt->close();
 
-    // Insert special charges
+    // ========================================================
+    // INSERT SPECIAL CHARGES
+    // ========================================================
     $special_charges = $input['special_charges'] ?? [];
-    
-    if (!empty($special_charges) && is_array($special_charges)) {
-        $charge_sql = "INSERT INTO sales_order_special_charge 
-                       (sales_order_no, customer_code, customer_name, charge_kind, charge_amount) 
-                       VALUES (?, ?, ?, ?, ?)";
-        $charge_stmt = $conn->prepare($charge_sql);
-        
-        if (!$charge_stmt) {
-            throw new Exception('Database error preparing special charge: ' . $conn->error);
+
+    if (!is_array($special_charges)) {
+        throw new Exception('Invalid special charges data.');
+    }
+
+    if (!empty($special_charges)) {
+        $chargeSql = "
+            INSERT INTO sales_order_special_charge (
+                sales_order_no,
+                customer_code,
+                customer_name,
+                charge_kind,
+                charge_amount,
+                charge_vat
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        ";
+
+        $chargeStmt = $conn->prepare($chargeSql);
+
+        if (!$chargeStmt) {
+            throw new Exception(
+                'Unable to prepare special charge insert: ' . $conn->error
+            );
         }
-        
+
         foreach ($special_charges as $charge) {
-            $charge_kind = $conn->real_escape_string($charge['charge_kind'] ?? '');
-            $charge_amount = floatval($charge['charge_amount'] ?? 0);
-            
-            if (empty($charge_kind) || $charge_amount <= 0) {
+            if (!is_array($charge)) {
                 continue;
             }
-            
-            $charge_stmt->bind_param(
-                'ssssd',
+
+            $charge_kind = trim(
+                (string)($charge['charge_kind'] ?? '')
+            );
+
+            $charge_amount = (float)(
+                $charge['charge_amount'] ?? 0
+            );
+
+            if ($charge_kind === '' || $charge_amount <= 0) {
+                continue;
+            }
+
+            // charge_vat = amount × 0.12 when special charges VAT is enabled, else NULL
+            $charge_vat = $special_charges_vat_enabled
+                ? round($charge_amount * 0.12, 2)
+                : null;
+
+            $charge_vat_param = ($charge_vat === null) ? null : (string)$charge_vat;
+
+            $chargeStmt->bind_param(
+                'ssssds',
                 $so_no,
                 $customer_code,
                 $customer_name,
                 $charge_kind,
-                $charge_amount
+                $charge_amount,
+                $charge_vat_param
             );
-            
-            if (!$charge_stmt->execute()) {
-                throw new Exception('Error saving special charge: ' . $charge_stmt->error);
+
+            if (!$chargeStmt->execute()) {
+                throw new Exception(
+                    'Error saving special charge: ' . $chargeStmt->error
+                );
             }
         }
-        $charge_stmt->close();
+
+        $chargeStmt->close();
     }
 
-    // Commit transaction
+    // Release table locks before committing.
+    $conn->query('UNLOCK TABLES');
+
+    // Commit the transaction.
     $conn->commit();
-    
-    echo json_encode([
-        'success' => true,
-        'so_no' => $so_no,
-        'message' => 'Sales Order saved successfully.'
+
+    jsonResponse(true, 'Sales Order saved successfully.', [
+        'so_no'                 => $so_no,
+        'footer'                => $footer,
+        'special_charges_vat'   => $special_charges_vat
     ]);
 
-} catch (Exception $e) {
-    // Rollback on error
-    $conn->rollback();
-    
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
-    ]);
+} catch (Throwable $e) {
+    // Always try to release locks on error
+    @$conn->query('UNLOCK TABLES');
+
+    // Roll back database changes.
+    @$conn->rollback();
+
+    error_log('save_so.php error: ' . $e->getMessage());
+
+    jsonResponse(false, 'Error saving Sales Order: ' . $e->getMessage());
+
+} finally {
+    $conn->close();
 }
-
-$conn->close();
 ?>

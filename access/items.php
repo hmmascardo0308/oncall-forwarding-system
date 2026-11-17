@@ -595,6 +595,7 @@ $result = mysqli_query($conn, $query);
                         <th>Item Name</th>
                         <th>Category</th>
                         <th>Brand</th>
+                        <th>Part Number</th>
                         <th>Stock</th>
                         <th>Unit Price</th>
                         <th>Status</th>
@@ -618,6 +619,9 @@ $result = mysqli_query($conn, $query);
                                     <div style="font-size:12px; color:var(--text-muted);"><?php echo htmlspecialchars($row['subcategory'] ?: ''); ?></div>
                                 </td>
                                 <td><?php echo htmlspecialchars($row['brand'] ?: '-'); ?></td>
+                                <td style="font-family: monospace; font-size: 13px; color: var(--text-muted);">
+                                    <?php echo htmlspecialchars($row['part_number'] ?: '-'); ?>
+                                </td>
                                 <td>
                                     <span class="stock-badge <?php echo $stockClass; ?>">
                                         <?php echo number_format($row['current_stock']); ?> <?php echo htmlspecialchars($row['unit_of_measure']); ?>
@@ -643,7 +647,7 @@ $result = mysqli_query($conn, $query);
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="8" style="text-align:center; padding:60px 20px; color:var(--text-muted);">
+                            <td colspan="9" style="text-align:center; padding:60px 20px; color:var(--text-muted);">
                                 <?php if (!empty($search_term)): ?>
                                     No items found matching "<strong><?php echo htmlspecialchars($search_term); ?></strong>"
                                     <br>
@@ -706,6 +710,10 @@ $result = mysqli_query($conn, $query);
                             <option value="Accessories">Accessories</option>
                             <option value="Services">Services</option>
                             <option value="Lubricants">Lubricants</option>
+                            <option value="Vehicle Fuel">Vehicle Fuel</option>
+                            <option value="Materials">Materials</option>
+                            <option value="Labor">Labor</option>
+
 
                         </select>
                     </div>
@@ -736,6 +744,8 @@ $result = mysqli_query($conn, $query);
                             <option value="ltr">Liter (ltr)</option>
                             <option value="mtr">Meter (mtr)</option>
                             <option value="pack">Pack</option>
+                            <option value="job">Job</option>
+
                         </select>
                     </div>
 
@@ -858,16 +868,19 @@ $result = mysqli_query($conn, $query);
                     <div class="form-group col-2">
                         <label>Category <span class="required">*</span></label>
                         <select name="category" id="edit_category" required>
-    <option value="">Select Category</option>
-    <option value="SPARE PARTS">Spare Parts</option>
-    <option value="EQUIPMENT">Equipment</option>
-    <option value="TOOLS">Tools</option>
-    <option value="CONSUMABLES">Consumables</option>
-    <option value="ACCESSORIES">Accessories</option>
-    <option value="SERVICES">Services</option>
-    <option value="LUBRICANTS">Lubricants</option>
+                            <option value="">Select Category</option>
+                            <option value="SPARE PARTS">Spare Parts</option>
+                            <option value="EQUIPMENT">Equipment</option>
+                            <option value="TOOLS">Tools</option>
+                            <option value="CONSUMABLES">Consumables</option>
+                            <option value="ACCESSORIES">Accessories</option>
+                            <option value="SERVICES">Services</option>
+                            <option value="LUBRICANTS">Lubricants</option>
+                            <option value="VEHICLE FUEL">Vehicle Fuel</option>
+                            <option value="MATERIALS">Materials</option>
+                            <option value="LABOR">Labor</option>
 
-</select>
+                        </select>
                     </div>
 
                     <div class="form-group col-2">
@@ -888,15 +901,17 @@ $result = mysqli_query($conn, $query);
                     <div class="form-group col-2">
                         <label>Unit of Measure <span class="required">*</span></label>
                         <select name="unit_of_measure" id="edit_unit_of_measure" required>
-    <option value="">Select Unit</option>
-    <option value="PCS">Pieces (pcs)</option>
-    <option value="BOX">Box</option>
-    <option value="SET">Set</option>
-    <option value="KG">Kilogram (kg)</option>
-    <option value="LTR">Liter (ltr)</option>
-    <option value="MTR">Meter (mtr)</option>
-    <option value="PACK">Pack</option>
-</select>
+                            <option value="">Select Unit</option>
+                            <option value="PCS">Pieces (pcs)</option>
+                            <option value="BOX">Box</option>
+                            <option value="SET">Set</option>
+                            <option value="KG">Kilogram (kg)</option>
+                            <option value="LTR">Liter (ltr)</option>
+                            <option value="MTR">Meter (mtr)</option>
+                            <option value="PACK">Pack</option>
+                            <option value="JOB">Job</option>
+
+                        </select>
                     </div>
 
                     <div class="form-group col-6">

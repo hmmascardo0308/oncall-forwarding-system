@@ -62,10 +62,38 @@ foreach ($invoices as $inv) {
     $total_due       += floatval($inv['total_amount']);
 }
 
-$net_of_discount = $subtotal - $discount_amount;
+// Get all SO numbers and fetch special charges VAT from source table
+$so_numbers = array_unique(array_filter(array_column($invoices, 'sales_order_no')));
+$special_charges_vat = 0.0;
 
-// Get all SO numbers
-$so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
+if (!empty($so_numbers)) {
+    $placeholders = implode(',', array_fill(0, count($so_numbers), '?'));
+    $stmt = $conn->prepare(
+        "SELECT COALESCE(SUM(charge_vat), 0) AS vat_sum
+         FROM sales_order_special_charge
+         WHERE sales_order_no IN ($placeholders)"
+    );
+    if ($stmt) {
+        $stmt->bind_param(str_repeat('s', count($so_numbers)), ...$so_numbers);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if ($res && ($row = $res->fetch_assoc())) {
+            $special_charges_vat = floatval($row['vat_sum'] ?? 0);
+        }
+        $stmt->close();
+    }
+}
+
+// Fallback derivation if source rows missing but totals imply VAT was included
+// total_amount ≈ amount + vat_amount + charge_amount + charge_vat
+if ($special_charges_vat <= 0) {
+    $implied = $total_due - $subtotal - $vat_amount - $special_charges;
+    if ($implied > 0.009) {
+        $special_charges_vat = round($implied, 2);
+    }
+}
+
+$net_of_discount = $subtotal - $discount_amount;
 
 ?>
 <!DOCTYPE html>
@@ -375,8 +403,7 @@ $so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
                         </thead>
                         <tbody>
                             <?php 
-                            // ── Build a combined list of rows: SOs first, then a synthetic
-                            //    "Special Charges" row (if any) ──
+                            // ── Build a combined list of rows: SOs first, then special charges / VAT ──
                             $print_rows = [];
 
                             // Regular SO rows
@@ -401,11 +428,22 @@ $so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
                                 ];
                             }
 
+                            // Special charges VAT summary row
+                            if ($special_charges_vat > 0) {
+                                $print_rows[] = [
+                                    'type'        => 'special_vat',
+                                    'label'       => 'Special Charges VAT (12%)',
+                                    'qty'         => '',
+                                    'unit_price'  => '',
+                                    'amount'      => $special_charges_vat,
+                                ];
+                            }
+
                             $row_count = count($print_rows);
                             for ($i = 0; $i < 4; $i++): 
                                 if ($i < $row_count):
                                     $r = $print_rows[$i];
-                                    $isSpecial = ($r['type'] === 'special');
+                                    $isSpecial = ($r['type'] === 'special' || $r['type'] === 'special_vat');
                             ?>
                             <tr class="<?= $isSpecial ? 'special-charge-row' : '' ?>">
                                 <td><strong><?= htmlspecialchars($r['label']) ?></strong></td>
@@ -490,6 +528,12 @@ $so_numbers = array_unique(array_column($invoices, 'sales_order_no'));
                     <tr>
                         <td style="color:#92400e;">ADD: SPECIAL CHARGES</td>
                         <td class="val-cell" style="color:#92400e;"><?= number_format($special_charges, 2) ?></td>
+                    </tr>
+                    <?php endif; ?>
+                    <?php if ($special_charges_vat > 0): ?>
+                    <tr>
+                        <td style="color:#92400e;">ADD: SPECIAL CHARGES VAT</td>
+                        <td class="val-cell" style="color:#92400e;"><?= number_format($special_charges_vat, 2) ?></td>
                     </tr>
                     <?php endif; ?>
                     <tr><td>TOTAL DUE</td><td class="val-cell"><?= number_format($total_due, 2) ?></td></tr>

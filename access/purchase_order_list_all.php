@@ -28,17 +28,18 @@ $current_page = basename($_SERVER['PHP_SELF']);
 requireAccess($user_roles, $current_page, $allowed_pages);
 
 // ---------------------------------------------------------------
-// Default date filter: current week (Monday to Sunday)
+// Default date filter: current month (first day to last day)
 // ---------------------------------------------------------------
 $today = new DateTime('now', new DateTimeZone('Asia/Manila'));
-$dayOfWeek = (int)$today->format('N'); // 1 = Monday, 7 = Sunday
-$monday = clone $today;
-$monday->modify('-' . ($dayOfWeek - 1) . ' days');
-$sunday = clone $monday;
-$sunday->modify('+6 days');
 
-$default_date_from = $monday->format('Y-m-d');
-$default_date_to   = $sunday->format('Y-m-d');
+$first_day_of_month = clone $today;
+$first_day_of_month->modify('first day of this month');
+
+$last_day_of_month = clone $today;
+$last_day_of_month->modify('last day of this month');
+
+$default_date_from = $first_day_of_month->format('Y-m-d');
+$default_date_to   = $last_day_of_month->format('Y-m-d');
 
 // Get filter parameters
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
@@ -47,11 +48,15 @@ $supplier_filter = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
 $delivery_status_filter = isset($_GET['delivery_status']) ? trim($_GET['delivery_status']) : '';
 $delivery_payment_filter = isset($_GET['delivery_payment']) ? trim($_GET['delivery_payment']) : '';
 
-// Use default weekly range if no date parameters are provided at all
+// Special filter values for null/empty handling
+$delivery_status_is_null = ($delivery_status_filter === '__NOT_AT_ALL__');
+$delivery_payment_is_null = ($delivery_payment_filter === '__NOT_AT_ALL__');
+
+// Use default monthly range if no date parameters are provided at all
 $date_from = isset($_GET['date_from']) ? trim($_GET['date_from']) : $default_date_from;
 $date_to   = isset($_GET['date_to'])   ? trim($_GET['date_to'])   : $default_date_to;
 
-// If the user explicitly cleared the dates via the "Clear" link, we still want the weekly default.
+// If the user explicitly cleared the dates via the "Clear" link, we still want the monthly default.
 // Detect "clear" by checking if the request has no filter keys at all besides possibly page.
 $has_any_filter = isset($_GET['search']) || isset($_GET['purchase_type']) || isset($_GET['supplier'])
     || isset($_GET['delivery_status']) || isset($_GET['delivery_payment'])
@@ -120,15 +125,25 @@ if (!empty($supplier_filter)) {
 }
 
 if (!empty($delivery_status_filter)) {
-    $query .= " AND po.delivery_status = ?";
-    $params[] = $delivery_status_filter;
-    $types .= "s";
+    if ($delivery_status_is_null) {
+        // "Not At All" = null or empty
+        $query .= " AND (po.delivery_status IS NULL OR po.delivery_status = '')";
+    } else {
+        $query .= " AND po.delivery_status = ?";
+        $params[] = $delivery_status_filter;
+        $types .= "s";
+    }
 }
 
 if (!empty($delivery_payment_filter)) {
-    $query .= " AND po.delivery_payment = ?";
-    $params[] = $delivery_payment_filter;
-    $types .= "s";
+    if ($delivery_payment_is_null) {
+        // "No Payment" = null or empty
+        $query .= " AND (po.delivery_payment IS NULL OR po.delivery_payment = '')";
+    } else {
+        $query .= " AND po.delivery_payment = ?";
+        $params[] = $delivery_payment_filter;
+        $types .= "s";
+    }
 }
 
 if (!empty($date_from)) {
@@ -236,25 +251,11 @@ if ($supplier_result) {
     }
 }
 
-// Get unique delivery statuses for filter dropdown
-$delivery_status_query = "SELECT DISTINCT delivery_status FROM purchase_order WHERE delivery_status IS NOT NULL AND delivery_status != '' ORDER BY delivery_status";
-$delivery_status_result = $conn->query($delivery_status_query);
-$delivery_statuses = [];
-if ($delivery_status_result) {
-    while ($row = $delivery_status_result->fetch_assoc()) {
-        $delivery_statuses[] = $row['delivery_status'];
-    }
-}
+// Fixed delivery status options
+$delivery_statuses = ['Fully Received', 'Partially Received'];
 
-// Get unique delivery payments for filter dropdown
-$delivery_payment_query = "SELECT DISTINCT delivery_payment FROM purchase_order WHERE delivery_payment IS NOT NULL AND delivery_payment != '' ORDER BY delivery_payment";
-$delivery_payment_result = $conn->query($delivery_payment_query);
-$delivery_payments = [];
-if ($delivery_payment_result) {
-    while ($row = $delivery_payment_result->fetch_assoc()) {
-        $delivery_payments[] = $row['delivery_payment'];
-    }
-}
+// Fixed delivery payment options
+$delivery_payments = ['Fully Paid', 'Partially Paid'];
 
 // Function to format currency
 function formatCurrency($amount) {
@@ -390,23 +391,19 @@ if (isset($_SESSION['login_success'])) unset($_SESSION['login_success']);
                     <label>Delivery Status:</label>
                     <select name="delivery_status">
                         <option value="">All</option>
-                        <?php foreach ($delivery_statuses as $dstatus): ?>
-                            <option value="<?php echo htmlspecialchars($dstatus); ?>" <?php echo $delivery_status_filter == $dstatus ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($dstatus); ?>
-                            </option>
-                        <?php endforeach; ?>
+                        <option value="Fully Received" <?php echo $delivery_status_filter == 'Fully Received' ? 'selected' : ''; ?>>Fully Received</option>
+                        <option value="Partially Received" <?php echo $delivery_status_filter == 'Partially Received' ? 'selected' : ''; ?>>Partially Received</option>
+                        <option value="__NOT_AT_ALL__" <?php echo $delivery_status_is_null ? 'selected' : ''; ?>>Not At All</option>
                     </select>
                 </div>
 
                 <div class="filter-group">
-                    <label>Delivery Payment:</label>
+                    <label>Payment Status:</label>
                     <select name="delivery_payment">
                         <option value="">All</option>
-                        <?php foreach ($delivery_payments as $dpayment): ?>
-                            <option value="<?php echo htmlspecialchars($dpayment); ?>" <?php echo $delivery_payment_filter == $dpayment ? 'selected' : ''; ?>>
-                                <?php echo htmlspecialchars($dpayment); ?>
-                            </option>
-                        <?php endforeach; ?>
+                        <option value="Fully Paid" <?php echo $delivery_payment_filter == 'Fully Paid' ? 'selected' : ''; ?>>Fully Paid</option>
+                        <option value="Partially Paid" <?php echo $delivery_payment_filter == 'Partially Paid' ? 'selected' : ''; ?>>Partially Paid</option>
+                        <option value="__NOT_AT_ALL__" <?php echo $delivery_payment_is_null ? 'selected' : ''; ?>>No Payment</option>
                     </select>
                 </div>
 

@@ -16,6 +16,24 @@ if (!$po_number) {
     exit;
 }
 
+// ─── Fetch the latest payment history record for this PO ───
+// Latest = most recent payment_date, then most recent created_at, then highest id
+$latest_stmt = $conn->prepare("
+    SELECT payment_date, created_by, created_at
+    FROM po_payment_history
+    WHERE po_number = ?
+    ORDER BY payment_date DESC, created_at DESC, id DESC
+    LIMIT 1
+");
+$latest_stmt->bind_param("s", $po_number);
+$latest_stmt->execute();
+$latest_res = $latest_stmt->get_result()->fetch_assoc();
+$latest_stmt->close();
+
+$latest_payment_date = $latest_res['payment_date'] ?? null;   // Delivered Date
+$latest_created_by   = $latest_res['created_by']   ?? null;   // Received By
+
+// ─── Main PO rows ───
 $stmt = $conn->prepare("SELECT * FROM purchase_order WHERE po_number = ? ORDER BY item_code ASC");
 $stmt->bind_param("s", $po_number);
 $stmt->execute();
@@ -44,7 +62,11 @@ while ($row = $result->fetch_assoc()) {
     $stock_data = $stock_result->fetch_assoc();
     $row['current_stock'] = $stock_data ? floatval($stock_data['current_stock']) : 0;
     $stock_stmt->close();
-    
+
+    // ─── Inject latest payment history info ───
+    $row['delivered_date'] = $latest_payment_date;
+    $row['received_by']    = $latest_created_by;
+
     $rows[] = $row;
 }
 
@@ -54,7 +76,7 @@ $stmt->close();
 $delivery_payment = $rows[0]['delivery_payment'] ?? 'Pending';
 $delivery_status  = $rows[0]['delivery_status'] ?? 'Pending';
 
-// ─── CHANGED: MAX, not SUM — net_amount_due is the same on every item row ───
+// MAX, not SUM — net_amount_due is the same on every item row
 $due_stmt = $conn->prepare("SELECT MAX(net_amount_due) AS due_total FROM purchase_order WHERE po_number = ?");
 $due_stmt->bind_param("s", $po_number);
 $due_stmt->execute();
@@ -70,7 +92,6 @@ $pay_stmt->close();
 $paid_total = floatval($pay_res['paid_total'] ?? 0);
 
 // ── Auto-upgrade: payments >= net due → Fully Received / Fully Paid ──
-//   Don't override explicit Cancelled or Late Delivery statuses.
 $is_explicit = in_array($delivery_status, ['Cancelled', 'Late Delivery'], true);
 $auto_upgraded = false;
 if (!$is_explicit
@@ -91,22 +112,23 @@ if ($delivery_payment === 'Fully Paid') {
     $total_amount_paid = $paid_total;
 }
 
-// Reflect the (possibly upgraded) status in the returned rows so the edit modal shows it
+// Reflect the (possibly upgraded) status in the returned rows
 if (!empty($rows)) {
     foreach ($rows as &$r) {
         $r['delivery_status']  = $delivery_status;
         $r['delivery_payment'] = $delivery_payment;
-        // Keep total_amount_paid consistent on every row for the modal
         $r['total_amount_paid'] = $total_amount_paid > 0 ? $total_amount_paid : ($r['total_amount_paid'] ?? 0);
+        // Keep latest payment info on every row
+        $r['delivered_date'] = $latest_payment_date;
+        $r['received_by']    = $latest_created_by;
     }
     unset($r);
 }
 
-// ─── CHANGED: locked only when Fully Received + Fully Paid AND history covers net due ───
+// ─── Locked only when Fully Received + Fully Paid AND history covers net due ───
 $is_locked = ($delivery_status === 'Fully Received')
           && ($delivery_payment === 'Fully Paid')
           && ($net_due_total > 0 && $paid_total >= $net_due_total);
-// ─── END CHANGED ───
 
 header('Content-Type: application/json');
 
@@ -117,16 +139,14 @@ if ($summary_only) {
             'success' => true,
             'rows' => $rows,
             'total_amount_paid' => $total_amount_paid,
-            // ─── CHANGED ───
             'paid_from_history' => $paid_total,
             'net_amount_due'    => $net_due_total,
             'balance'           => max(0, $net_due_total - $paid_total),
             'locked'            => $is_locked,
-            // ─── END CHANGED ───
             'delivery_status' => $delivery_status,
             'delivery_payment' => $delivery_payment,
-            'delivered_date' => $po['delivered_date'] ?? null,
-            'received_by' => $po['received_by'] ?? null,
+            'delivered_date' => $latest_payment_date,   // latest payment_date
+            'received_by' => $latest_created_by,        // latest created_by
             'auto_upgraded' => $auto_upgraded
         ]);
     } else {
@@ -141,14 +161,14 @@ if ($summary_only) {
         'success' => true,
         'rows' => $rows,
         'total_amount_paid' => $total_amount_paid,
-        // ─── CHANGED ───
         'paid_from_history' => $paid_total,
         'net_amount_due'    => $net_due_total,
         'balance'           => max(0, $net_due_total - $paid_total),
         'locked'            => $is_locked,
-        // ─── END CHANGED ───
         'delivery_status' => $delivery_status,
         'delivery_payment' => $delivery_payment,
+        'delivered_date' => $latest_payment_date,
+        'received_by' => $latest_created_by,
         'auto_upgraded' => $auto_upgraded
     ]);
 }

@@ -28,17 +28,18 @@ $current_page = basename($_SERVER['PHP_SELF']);
 requireAccess($user_roles, $current_page, $allowed_pages);
 
 // ---------------------------------------------------------------
-// Default date filter: current week (Monday to Sunday)
+// Default date filter: current month (first day to last day)
 // ---------------------------------------------------------------
 $today = new DateTime('now', new DateTimeZone('Asia/Manila'));
-$dayOfWeek = (int)$today->format('N');
-$monday = clone $today;
-$monday->modify('-' . ($dayOfWeek - 1) . ' days');
-$sunday = clone $monday;
-$sunday->modify('+6 days');
 
-$default_date_from = $monday->format('Y-m-d');
-$default_date_to   = $sunday->format('Y-m-d');
+$first_day_of_month = clone $today;
+$first_day_of_month->modify('first day of this month');
+
+$last_day_of_month = clone $today;
+$last_day_of_month->modify('last day of this month');
+
+$default_date_from = $first_day_of_month->format('Y-m-d');
+$default_date_to   = $last_day_of_month->format('Y-m-d');
 
 // Get filter parameters
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
@@ -46,6 +47,10 @@ $purchase_type_filter = isset($_GET['purchase_type']) ? trim($_GET['purchase_typ
 $supplier_filter = isset($_GET['supplier']) ? trim($_GET['supplier']) : '';
 $delivery_status_filter = isset($_GET['delivery_status']) ? trim($_GET['delivery_status']) : '';
 $delivery_payment_filter = isset($_GET['delivery_payment']) ? trim($_GET['delivery_payment']) : '';
+
+// Special filter values for null/empty handling
+$delivery_status_is_null = ($delivery_status_filter === '__NOT_AT_ALL__');
+$delivery_payment_is_null = ($delivery_payment_filter === '__NOT_AT_ALL__');
 
 $date_from = isset($_GET['date_from']) ? trim($_GET['date_from']) : $default_date_from;
 $date_to   = isset($_GET['date_to'])   ? trim($_GET['date_to'])   : $default_date_to;
@@ -108,15 +113,25 @@ if (!empty($supplier_filter)) {
 }
 
 if (!empty($delivery_status_filter)) {
-    $query .= " AND po.delivery_status = ?";
-    $params[] = $delivery_status_filter;
-    $types .= "s";
+    if ($delivery_status_is_null) {
+        // "Not At All" = null or empty
+        $query .= " AND (po.delivery_status IS NULL OR po.delivery_status = '')";
+    } else {
+        $query .= " AND po.delivery_status = ?";
+        $params[] = $delivery_status_filter;
+        $types .= "s";
+    }
 }
 
 if (!empty($delivery_payment_filter)) {
-    $query .= " AND po.delivery_payment = ?";
-    $params[] = $delivery_payment_filter;
-    $types .= "s";
+    if ($delivery_payment_is_null) {
+        // "No Payment" = null or empty
+        $query .= " AND (po.delivery_payment IS NULL OR po.delivery_payment = '')";
+    } else {
+        $query .= " AND po.delivery_payment = ?";
+        $params[] = $delivery_payment_filter;
+        $types .= "s";
+    }
 }
 
 if (!empty($date_from)) {
@@ -199,8 +214,16 @@ $filter_description = [];
 if (!empty($search)) $filter_description[] = "Search: " . $search;
 if (!empty($purchase_type_filter)) $filter_description[] = "Purpose: " . $purchase_type_filter;
 if (!empty($supplier_filter)) $filter_description[] = "Supplier: " . $supplier_filter;
-if (!empty($delivery_status_filter)) $filter_description[] = "Delivery Status: " . $delivery_status_filter;
-if (!empty($delivery_payment_filter)) $filter_description[] = "Delivery Payment: " . $delivery_payment_filter;
+if ($delivery_status_is_null) {
+    $filter_description[] = "Delivery Status: Not At All";
+} elseif (!empty($delivery_status_filter)) {
+    $filter_description[] = "Delivery Status: " . $delivery_status_filter;
+}
+if ($delivery_payment_is_null) {
+    $filter_description[] = "Delivery Payment: No Payment";
+} elseif (!empty($delivery_payment_filter)) {
+    $filter_description[] = "Delivery Payment: " . $delivery_payment_filter;
+}
 if (!empty($date_from)) $filter_description[] = "From: " . date('M d, Y', strtotime($date_from));
 if (!empty($date_to)) $filter_description[] = "To: " . date('M d, Y', strtotime($date_to));
 

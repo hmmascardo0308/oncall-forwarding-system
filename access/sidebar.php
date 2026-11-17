@@ -7,49 +7,51 @@ if (!isset($menu_groups)) {
             'label' => 'Customers & Sales',
             'icon' => 'users',
             'pages' => [
-                'customer.php' => 'Customers Profile',
-                'customer_pricing.php' => 'Customer Pricing',
-                'sales_order_all.php' => 'Sales Order',
-                'service_invoice.php' => 'Service Invoice'
+                'customer.php' => ['label' => 'Customers Profile', 'icon' => 'user'],
+                'customer_pricing.php' => ['label' => 'Customer Pricing', 'icon' => 'tag'],
+                'sales_order_all.php' => ['label' => 'Sales Order', 'icon' => 'shopping-cart'],
+                'service_invoice.php' => ['label' => 'Service Invoice', 'icon' => 'file-text']
             ]
         ],
         'vendors_purchases' => [
             'label' => 'Vendors & Purchases',
             'icon' => 'shopping-bag',
             'pages' => [
-                'suppliers.php' => 'Suppliers Profile',
-                'purchase_order.php' => 'Purchase Order',
-                'purchase_order_list_all.php' => 'View Orders',
-                'purchase_orders_list.php' => 'Purchase Receiving',
+                'suppliers.php' => ['label' => 'Suppliers Profile', 'icon' => 'handshake'],
+                'purchase_order.php' => ['label' => 'Purchase Order', 'icon' => 'clipboard-list'],
+                'purchase_order_fuel.php' => ['label' => 'Purchase Order (Fuel)', 'icon' => 'fuel'],
+                'purchase_order_list_all.php' => ['label' => 'View Orders', 'icon' => 'eye'],
+                'purchase_orders_list.php' => ['label' => 'Purchase Receiving', 'icon' => 'package-check'],
             ]
         ],
         'inventory_services' => [
             'label' => 'Inventory & Services',
             'icon' => 'package',
             'pages' => [
-                'truck_masterlist.php' => 'Vehicles List',
-                'trailers.php' => 'Trailers List',
-                // 'prime_movers.php' => 'Prime Movers List',
-                'items.php' => 'Items List',
-                'item_issuance.php' => 'Items Issuance'
+                'truck_masterlist.php' => ['label' => 'Vehicles List', 'icon' => 'truck'],
+                'trailers.php' => ['label' => 'Trailers List', 'icon' => 'container'],
+                'items.php' => ['label' => 'Items List', 'icon' => 'list'],
+                'item_issuance.php' => ['label' => 'Items Issuance', 'icon' => 'arrow-up-right'],
+                'fuel_transaction.php' => ['label' => 'Fuel Transaction', 'icon' => 'fuel'],
             ]
         ],
         'settings' => [
             'label' => 'Settings',
             'icon' => 'settings',
             'pages' => [
-                'all_users.php' => 'Manage Users',
-                'employee_list.php' => 'Employees',
-                'general_settings.php' => 'General Settings'
+                'po_approval.php' => ['label' => 'Approve PO', 'icon' => 'check-square'],
+                'item_issuance_approval.php' => ['label' => 'Approve Item Issuance', 'icon' => 'check-square'],
+                'all_users.php' => ['label' => 'Manage Users', 'icon' => 'users'],
+                'employee_list.php' => ['label' => 'Employees', 'icon' => 'user-check'],
+                'general_settings.php' => ['label' => 'General Settings', 'icon' => 'settings']
             ]
         ]
     ];
 }
 
 // Function to check if any page in a group is accessible
-// (kept for possible future use, but no longer used to hide groups)
 function isGroupAccessible($group, $user_roles, $allowed_pages) {
-    foreach ($group['pages'] as $page => $label) {
+    foreach ($group['pages'] as $page => $pageData) {
         if (hasAccess($page, $user_roles, $allowed_pages)) {
             return true;
         }
@@ -72,16 +74,10 @@ $parent_mapping = [
     'sales_order.php'=> 'sales_order_all.php',
     'aged_payables.php' => 'reports.php',
     'aged_receivables.php' => 'reports.php',
-    // 'purchase_order_list_all.php' => 'reports.php',
     'service_invoice_list_all.php' => 'reports.php',
-  'sales_order_list_all.php' => 'reports.php',
-  'vendor_list.php' => 'reports.php',
-'vendor_ledger.php' => 'reports.php'
-
-
-
-
-
+    'sales_order_list_all.php' => 'reports.php',
+    'vendor_list.php' => 'reports.php',
+    'vendor_ledger.php' => 'reports.php'
 ];
 
 // For standalone pages that should map to sidebar links
@@ -90,17 +86,10 @@ $standalone_mapping = [
     'aged_receivables.php' => 'reports.php',
     'customer_ledger.php' => 'reports.php',
     'customer_list.php' => 'reports.php',
-    // 'purchase_order_list_all.php' => 'reports.php',
     'service_invoice_list_all.php' => 'reports.php',
-  'sales_order_list_all.php' => 'reports.php',
-  'vendor_list.php' => 'reports.php',
-'vendor_ledger.php' => 'reports.php'
-
-
-
-
-
-
+    'sales_order_list_all.php' => 'reports.php',
+    'vendor_list.php' => 'reports.php',
+    'vendor_ledger.php' => 'reports.php'
 ];
 
 // Check if current page is a sub-page that should map to a parent
@@ -137,12 +126,13 @@ if (isset($standalone_mapping[$current_page])) {
                     <i data-lucide="chevron-right" class="chevron" id="chevron-<?php echo $group_key; ?>"></i>
                 </div>
                 <div class="nav-dropdown" id="dropdown-<?php echo $group_key; ?>">
-                    <?php foreach ($group['pages'] as $page => $label): ?>
-                        <!-- Always show every page link -->
+                    <?php foreach ($group['pages'] as $page => $pageData): ?>
+                        <!-- Always show every page link with icon -->
                         <a href="<?php echo $page; ?>"
                            <?php echo ($active_page_for_sidebar == $page) ? 'class="active"' : ''; ?>
                            onclick="return checkAccess('<?php echo $page; ?>')">
-                            <?php echo $label; ?>
+                            <i data-lucide="<?php echo $pageData['icon']; ?>" class="sub-icon"></i>
+                            <?php echo $pageData['label']; ?>
                         </a>
                     <?php endforeach; ?>
                 </div>
@@ -187,7 +177,7 @@ if (isset($standalone_mapping[$current_page])) {
     // Auto-open dropdown if a page inside it is active
     document.addEventListener('DOMContentLoaded', function() {
         <?php foreach ($menu_groups as $group_key => $group): ?>
-            <?php foreach ($group['pages'] as $page => $label): ?>
+            <?php foreach ($group['pages'] as $page => $pageData): ?>
                 if (window.location.pathname.includes('<?php echo $page; ?>')) {
                     const dropdown = document.getElementById('dropdown-<?php echo $group_key; ?>');
                     const chevron = document.getElementById('chevron-<?php echo $group_key; ?>');
@@ -205,7 +195,7 @@ if (isset($standalone_mapping[$current_page])) {
         <?php foreach ($parent_mapping as $sub_page => $parent_page): ?>
             if (window.location.pathname.includes('<?php echo $sub_page; ?>')) {
                 <?php foreach ($menu_groups as $group_key => $group): ?>
-                    <?php foreach ($group['pages'] as $page => $label): ?>
+                    <?php foreach ($group['pages'] as $page => $pageData): ?>
                         if ('<?php echo $page; ?>' === '<?php echo $parent_page; ?>') {
                             const dropdown = document.getElementById('dropdown-<?php echo $group_key; ?>');
                             const chevron = document.getElementById('chevron-<?php echo $group_key; ?>');
