@@ -111,7 +111,6 @@ if (isset($_GET['action'])) {
         $warranty = $conn->real_escape_string($input['warranty']);
         $remarks = $conn->real_escape_string($input['remarks']);
         $freight = floatval($input['freight']);
-        $labor = isset($input['labor']) ? floatval($input['labor']) : 0;
         
         $subtotal = floatval($input['subtotal']);
         $total_vat = floatval($input['total_vat']);
@@ -205,7 +204,7 @@ if (isset($_GET['action'])) {
                 $sql = "INSERT INTO purchase_order (
                     po_number, supplier_code, supplier_name, purchase_type, po_date, 
                     expected_delivery, payment_terms, currency, delivery_address, delivery_mode,
-                    item_code, item, part_number, unit, qty_ordered, unit_cost, warranty, remarks, freight, labor,
+                    item_code, item, part_number, unit, qty_ordered, unit_cost, warranty, remarks, freight,
                     subtotal, total_vat, total_amount, status, created_by, created_at,
                     truck_code, brand, model, with_vat, withholding_tax_percent, withholding_tax_amount, net_amount_due,
                     trailer_code, prime_mover_code, customer_code,
@@ -214,7 +213,7 @@ if (isset($_GET['action'])) {
                     '$po_number', '$supplier_code', '$supplier_name', '$purchase_type', '$po_date',
                     " . ($expected_delivery ? "'$expected_delivery'" : "NULL") . ", '$payment_terms', '$currency', 
                     '$delivery_address', '$delivery_mode', '$item_code', '$item_name', '$part_number', '$unit', 
-                    $qty_ordered, $unit_cost, '$warranty', '$remarks', $freight, $labor,
+                    $qty_ordered, $unit_cost, '$warranty', '$remarks', $freight,
                     $without_vat, $vat_amount, $item_total, '$status', '$created_by', '$created_at',
                     " . ($item_truck_code ? "'$item_truck_code'" : "NULL") . ", " . ($vehicle_brand ? "'$vehicle_brand'" : "NULL") . ", " . ($vehicle_model ? "'$vehicle_model'" : "NULL") . ",
                     $with_vat, $withholding_tax_percent, $withholding_tax_amount, $net_amount_due,
@@ -784,9 +783,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Total VAT</span><span id="vat-total">₱0.00</span></div>
                     <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Shipping / Freight</span>
                         <input type="number" id="freight" value="0" min="0" step="0.01" style="width:100px;text-align:right;padding:4px 8px;" oninput="calcTotals()">
-                    </div>
-                    <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Labor <span style="font-size:12px;font-weight:500;color:#64748b;">(optional)</span></span>
-                        <input type="number" id="labor" value="0" min="0" step="0.01" style="width:100px;text-align:right;padding:4px 8px;" oninput="calcTotals()" placeholder="0.00">
                     </div>
                     <div class="totals-row total-final"><span style="font-size: 20px; color: black; font-weight: 800;">Total PO Amount</span> <span id="grand-total">₱0.00</span></div>
                 </div>
@@ -1533,8 +1529,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         }
         
         const freight = parseFloat(document.getElementById('freight').value) || 0;
-        const labor = parseFloat(document.getElementById('labor')?.value) || 0;
-        const grand = subtotalAfterPODiscount + finalVAT + freight + labor;
+        const grand = subtotalAfterPODiscount + finalVAT + freight;
         
         document.getElementById('item-subtotal-display').textContent = formatPHP(totalItemSubtotal);
         document.getElementById('item-discount-total').textContent = formatPHP(totalItemDiscount);
@@ -2015,7 +2010,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             warranty: document.getElementById('warranty').value,
             remarks: document.getElementById('remarks').value,
             freight: parseFloat(document.getElementById('freight').value) || 0,
-            labor: parseFloat(document.getElementById('labor')?.value) || 0,
             subtotal: totals.subtotal,
             total_vat: totals.totalVAT,
             total_amount: totals.grand,

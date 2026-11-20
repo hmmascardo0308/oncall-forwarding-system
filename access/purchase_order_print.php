@@ -32,13 +32,22 @@ $requested_by = $po_details['requested_by'] ?? '';
 // Get all items for this PO
 $items_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '$safe_po_number' ORDER BY id");
 $po_items = [];
+$has_labor_items = false; // True if any item is a labor item / has a labor description
 while ($row = $items_query->fetch_assoc()) {
     $po_items[] = $row;
+
+    // Detect labor items (item named "labor" or has a saved labor description)
+    if (strtolower(trim($row['item'] ?? '')) === 'labor' || !empty(trim($row['labor_description'] ?? ''))) {
+        $has_labor_items = true;
+    }
 }
 
 if (empty($po_items)) {
     die("No items found for this Purchase Order.");
 }
+
+// Only show the Labor Description column when the PO has labor items
+$show_labor_column = $has_labor_items;
 
 // ─── CORRECTED TOTALS – matches purchase_order.php creation logic exactly ──
 // Unit costs are VAT-inclusive when with_vat = 1.
@@ -141,7 +150,17 @@ if ($created_by) {
     <link rel="icon" type="image/png" href="../images/oncall-forwarding.png">
     <link rel="stylesheet" href="css/po_print.css?v=<?= time(); ?>">
 
-  
+    <style>
+        /* Labor description column (print view) */
+        .items-table .labor-desc-col {
+            width: 160px;
+            white-space: normal;
+            word-break: break-word;
+        }
+        .items-table .labor-desc-empty {
+            color: #888;
+        }
+    </style>
 </head>
 <body>
 
@@ -221,6 +240,9 @@ if ($created_by) {
             <tr>
                 <th style="width: 100px;">Item Code</th>
                 <th>Item Description</th>
+                <?php if ($show_labor_column): ?>
+                <th class="labor-desc-col">Labor Description</th>
+                <?php endif; ?>
                 <th style="width: 50px;">Unit</th>
                 <th style="width: 50px; text-align: center;">Qty</th>
                 <th style="width: 80px; text-align: right;">Unit Cost</th>
@@ -242,10 +264,25 @@ if ($created_by) {
                 if ($item_subtotal > 0 && $item_discount > 0) {
                     $discount_percent_display = ($item_discount / $item_subtotal) * 100;
                 }
+
+                $labor_desc = trim($item['labor_description'] ?? '');
+                $is_labor_item = strtolower(trim($item['item'] ?? '')) === 'labor';
             ?>
             <tr>
                 <td><?= htmlspecialchars($item['item_code']) ?></td>
                 <td><?= htmlspecialchars($item['item']) ?></td>
+                <?php if ($show_labor_column): ?>
+                <td class="labor-desc-col <?= $labor_desc === '' ? 'labor-desc-empty' : '' ?>">
+                    <?php
+                    if ($labor_desc !== '') {
+                        echo nl2br(htmlspecialchars($labor_desc));
+                    } else {
+                        // Labor row without a description shows a note; non-labor rows show a dash
+                        echo $is_labor_item ? '<em>No description</em>' : '—';
+                    }
+                    ?>
+                </td>
+                <?php endif; ?>
                 <td class="text-center"><?= htmlspecialchars($item['unit']) ?></td>
                 <td class="text-center"><?= $qty_ordered ?></td>
                 <td class="text-right"><?= number_format($unit_cost, 2) ?></td>

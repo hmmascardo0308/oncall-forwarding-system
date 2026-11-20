@@ -46,6 +46,7 @@ $po_summary = null;
 $selected_requested_by = '';
 $unique_trucks = []; // Array to hold unique truck codes for multi-truck POs
 $unique_requesters = []; // Unique requested_by values across items
+$has_labor_items = false; // True if any item is a labor item / has a labor description
 
 if ($selected_po) {
     $header_query = $conn->query("SELECT * FROM purchase_order WHERE po_number = '" . $conn->real_escape_string($selected_po) . "' LIMIT 1");
@@ -63,6 +64,10 @@ if ($selected_po) {
         if (!empty($row['requested_by'])) {
             $unique_requesters[$row['requested_by']] = true;
         }
+        // Detect labor items (item named "labor" or has a saved labor description)
+        if (strtolower(trim($row['item'] ?? '')) === 'labor' || !empty(trim($row['labor_description'] ?? ''))) {
+            $has_labor_items = true;
+        }
     }
     // Convert back to simple array
     $unique_trucks = array_keys($unique_trucks);
@@ -73,7 +78,6 @@ if ($selected_po) {
             'subtotal' => $po_items[0]['subtotal'] ?? 0,
             'total_vat' => $po_items[0]['total_vat'] ?? 0,
             'freight' => $po_items[0]['freight'] ?? 0,
-            'labor' => $po_items[0]['labor'] ?? 0,
             'total_amount' => $po_items[0]['total_amount'] ?? 0,
             'withholding_tax_amount' => $po_items[0]['withholding_tax_amount'] ?? 0,
             'net_amount_due' => $po_items[0]['net_amount_due'] ?? 0,
@@ -195,6 +199,10 @@ if ($po_details) {
 $is_truck_repair_po = count($unique_trucks) > 0;
 $show_truck_column = count($unique_trucks) > 0;
 $show_requested_by_column = true; // always show per-item requested by in items table
+$show_labor_column = $has_labor_items; // only show Labor Description column when the PO has labor items
+
+// Table min-width grows with the optional columns
+$items_table_min_width = 1500 + ($show_labor_column ? 220 : 0);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -244,6 +252,20 @@ $show_requested_by_column = true; // always show per-item requested by in items 
             font-weight: 600;
             margin-right: 4px;
             margin-bottom: 4px;
+        }
+
+        /* Labor description cell */
+        .labor-desc-text {
+            min-width: 220px;
+            max-width: 360px;
+            white-space: normal;
+            word-break: break-word;
+            font-size: 13px;
+            color: #92400e;
+            font-weight: 500;
+        }
+        .labor-desc-empty {
+            color: var(--text-muted);
         }
     </style>
 </head>
@@ -462,7 +484,7 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                 </div>
 
                 <div class="table-wrapper" style="overflow-x: auto;">
-                    <table id="items-table" style="min-width: 1500px;">
+                    <table id="items-table" style="min-width: <?php echo $items_table_min_width; ?>px;">
                         <thead>
                             <tr>
                                 <th>#</th>
@@ -472,6 +494,9 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                                 <th>Assigned Truck</th>
                                 <?php endif; ?>
                                 <th>Requested By</th>
+                                <?php if ($show_labor_column): ?>
+                                <th>Labor Description</th>
+                                <?php endif; ?>
                                 <th>Unit</th>
                                 <th>Qty Ordered</th>
                                 <th>Qty Received</th>
@@ -512,6 +537,9 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                                     $without_vat = $discounted_total;
                                     $vat_amount  = 0;
                                 }
+
+                                $labor_desc = trim($item['labor_description'] ?? '');
+                                $is_labor_item = strtolower(trim($item['item'] ?? '')) === 'labor';
                             ?>
                             <tr>
                                 <td style="color:var(--text-muted);font-weight:600;"><?php echo $counter++; ?></td>
@@ -535,6 +563,18 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                                 <td style="font-weight:500; color:#166534;">
                                     <?php echo htmlspecialchars($item['requested_by'] ?: '—'); ?>
                                 </td>
+                                <?php if ($show_labor_column): ?>
+                                <td class="labor-desc-text <?php echo $labor_desc === '' ? 'labor-desc-empty' : ''; ?>">
+                                    <?php
+                                    if ($labor_desc !== '') {
+                                        echo nl2br(htmlspecialchars($labor_desc));
+                                    } else {
+                                        // Labor row without a description shows a note; non-labor rows show a dash
+                                        echo $is_labor_item ? '<em>No description</em>' : '—';
+                                    }
+                                    ?>
+                                </td>
+                                <?php endif; ?>
                                 <td><?php echo htmlspecialchars($item['unit']); ?></td>
                                 <td style="text-align:center;"><?php echo $qty_ordered; ?></td>
                                 <td style="text-align:center;"><?php echo $qty_received; ?></td>
@@ -601,7 +641,6 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                         $po_discount_amount      = floatval($po_summary['discount_amount'] ?? 0);
                         $po_discount_percent     = floatval($po_summary['discount_percent'] ?? 0);
                         $freight                 = floatval($po_summary['freight'] ?? 0);
-                        $labor                   = floatval($po_summary['labor'] ?? 0);
                         $withholding_tax_percent = floatval($po_summary['withholding_tax_percent'] ?? 0);
 
                         if ($with_vat) {
@@ -619,7 +658,7 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                             $total_vat = 0;
                         }
 
-                        $grand_total = $subtotal_after_po_discount + $total_vat + $freight + $labor;
+                        $grand_total = $subtotal_after_po_discount + $total_vat + $freight;
 
                         $wht_base = $subtotal_after_po_discount;
                         if ($withholding_tax_percent > 0) {
@@ -669,12 +708,6 @@ $show_requested_by_column = true; // always show per-item requested by in items 
                             <span>Shipping / Freight</span>
                             <span>₱ <?php echo number_format($freight, 2); ?></span>
                         </div>
-                        <?php if ($labor > 0): ?>
-                        <div class="totals-row">
-                            <span>Labor</span>
-                            <span>₱ <?php echo number_format($labor, 2); ?></span>
-                        </div>
-                        <?php endif; ?>
                         <div class="totals-row total-final">
                             <span>Total PO Amount</span>&nbsp;
                             <span>₱ <?php echo number_format($grand_total, 2); ?></span>

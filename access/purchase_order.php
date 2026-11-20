@@ -101,7 +101,6 @@ if (isset($_GET['action'])) {
         $warranty = $conn->real_escape_string($input['warranty']);
         $remarks = $conn->real_escape_string($input['remarks']);
         $freight = floatval($input['freight']);
-        $labor = isset($input['labor']) ? floatval($input['labor']) : 0;
 
         $subtotal = floatval($input['subtotal']);
         $total_vat = floatval($input['total_vat']);
@@ -181,25 +180,32 @@ if (isset($_GET['action'])) {
                 // Per-item requested_by
                 $requested_by = isset($item['requested_by']) ? $conn->real_escape_string($item['requested_by']) : '';
 
+                // Per-item labor description (only saved when the item is "labor")
+                $labor_description = null;
+                if (strtolower(trim($item['item_name'] ?? '')) === 'labor' && !empty(trim($item['labor_description'] ?? ''))) {
+                    $labor_description = $conn->real_escape_string(trim($item['labor_description']));
+                }
+
                 $sql = "INSERT INTO purchase_order (
                     po_number, supplier_code, supplier_name, purchase_type, po_date, 
                     expected_delivery, payment_terms, currency, delivery_address, delivery_mode,
-                    item_code, item, part_number, unit, qty_ordered, unit_cost, warranty, remarks, freight, labor,
+                    item_code, item, part_number, unit, qty_ordered, unit_cost, warranty, remarks, freight,
                     subtotal, total_vat, total_amount, status, created_by, created_at,
                     truck_code, brand, model, with_vat, withholding_tax_percent, withholding_tax_amount, net_amount_due,
                     trailer_code, prime_mover_code,
-                    discount_percent, discount_amount, item_discount_amount, requested_by
+                    discount_percent, discount_amount, item_discount_amount, requested_by, labor_description
                 ) VALUES (
                     '$po_number', '$supplier_code', '$supplier_name', '$purchase_type', '$po_date',
                     " . ($expected_delivery ? "'$expected_delivery'" : "NULL") . ", '$payment_terms', '$currency', 
                     '$delivery_address', '$delivery_mode', '$item_code', '$item_name', '$part_number', '$unit', 
-                    $qty_ordered, $unit_cost, '$warranty', '$remarks', $freight, $labor,
+                    $qty_ordered, $unit_cost, '$warranty', '$remarks', $freight,
                     $without_vat, $vat_amount, $item_total, '$status', '$created_by', '$created_at',
                     " . ($item_truck_code ? "'$item_truck_code'" : "NULL") . ", " . ($vehicle_brand ? "'$vehicle_brand'" : "NULL") . ", " . ($vehicle_model ? "'$vehicle_model'" : "NULL") . ",
                     $with_vat, $withholding_tax_percent, $withholding_tax_amount, $net_amount_due,
                     " . ($trailer_code ? "'$trailer_code'" : "NULL") . ",
                     " . ($prime_mover_code ? "'$prime_mover_code'" : "NULL") . ",
-                    $discount_percent, $discount_amount, $item_discount_amount, '$requested_by'
+                    $discount_percent, $discount_amount, $item_discount_amount, '$requested_by',
+                    " . ($labor_description !== null ? "'$labor_description'" : "NULL") . "
                 )";
 
                 if (!$conn->query($sql)) {
@@ -505,6 +511,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                                 <th>Item / Description</th>
                                 <th id="truck-col-header" style="display:none;">Plate Number / Truck</th>
                                 <th>Requested By <span style="color:red;">*</span></th>
+                                <th id="labor-col-header" style="display:none;">Labor Description</th>
                                 <th>Unit</th>
                                 <th>Qty Ordered</th>
                                 <th>Unit Cost</th>
@@ -559,9 +566,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Total VAT</span><span id="vat-total">₱0.00</span></div>
                     <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Shipping / Freight</span>
                         <input type="number" id="freight" value="0" min="0" step="0.01" style="width:100px;text-align:right;padding:4px 8px;" oninput="calcTotals()">
-                    </div>
-                    <div class="totals-row"><span style="font-size: 15px; color: black; font-weight: 800;">Labor <span style="font-size:12px;font-weight:500;color:#64748b;">(optional)</span></span>
-                        <input type="number" id="labor" value="0" min="0" step="0.01" style="width:100px;text-align:right;padding:4px 8px;" oninput="calcTotals()" placeholder="0.00">
                     </div>
                     <div class="totals-row total-final"><span style="font-size: 20px; color: black; font-weight: 800;">Total PO Amount</span> <span id="grand-total">₱0.00</span></div>
                 </div>
@@ -868,6 +872,44 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         });
     }
 
+    // ── Labor Description (only for item_name = "labor") ─────────────────────
+    // NOTE: exact, case-insensitive match. If your masterlist uses names such as
+    // "Labor Charge", change this to: (name || '').toLowerCase().includes('labor')
+    // (and update the PHP check in save_po to stripos(...) !== false).
+    function isLaborItemName(name) {
+        return (name || '').trim().toLowerCase() === 'labor';
+    }
+
+    function isLaborRow(row) {
+        const code = row.querySelector('.item-code-hidden')?.value;
+        if (!code) return false;
+        const item = allItemsData.find(i => i.item_code === code);
+        return !!item && isLaborItemName(item.item_name);
+    }
+
+    function refreshLaborColumn() {
+        let anyLabor = false;
+
+        document.querySelectorAll('#items-body tr').forEach(row => {
+            const labor = isLaborRow(row);
+            if (labor) anyLabor = true;
+
+            const input = row.querySelector('.labor-desc-input');
+            if (input) {
+                input.disabled = !labor;
+                input.placeholder = labor ? 'Describe the labor work...' : 'N/A';
+                if (!labor) input.value = '';   // clear if item was changed away from labor
+            }
+        });
+
+        // Show the column only if at least one row is a labor item
+        const header = document.getElementById('labor-col-header');
+        if (header) header.style.display = anyLabor ? 'table-cell' : 'none';
+        document.querySelectorAll('.labor-desc-cell').forEach(cell => {
+            cell.style.display = anyLabor ? 'table-cell' : 'none';
+        });
+    }
+
     // ── Add Row ──────────────────────────────────────────────────────────────
     function addRow() {
         rowCount++;
@@ -900,6 +942,9 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     <option value="">-- Select Employee --</option>
                 </select>
             </td>
+            <td class="labor-desc-cell" style="display:none;">
+                <input type="text" class="labor-desc-input" placeholder="N/A" maxlength="500" style="min-width:220px;" disabled>
+            </td>
             <td><input type="text" class="unit-input" value="" style="width:80px;text-align:center;" readonly></td>
             <td><input type="number" value="1" min="1" style="width:80px;text-align:center;" class="qty-input" oninput="calcRowTotals(this)"></td>
             <td><input type="number" value="0.00" min="0" step="0.01" style="width:110px;text-align:right;" class="price-input" oninput="calcRowTotals(this)"></td>
@@ -916,6 +961,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         // Populate selects for this new row
         populateRequestedBySelect(tr.querySelector('.requested-by-select'));
         refreshTruckAssignmentColumn();
+        refreshLaborColumn();
         calculateRowTotals(tr);
     }
 
@@ -940,6 +986,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                     row.querySelector('.price-input').value = '0.00';
                     calculateRowTotals(row);
                     calcTotals();
+                    refreshLaborColumn();
                 }
             }
         }
@@ -1041,6 +1088,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
 
         calculateRowTotals(row);
         calcTotals();
+        refreshLaborColumn();
     }
 
     // ── Calculate Row Totals ──────────────────────────────────────────────────
@@ -1114,6 +1162,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         });
         rowCount = document.querySelectorAll('#items-body tr').length;
         calcTotals();
+        refreshLaborColumn();
     }
 
     function formatPHP(val) {
@@ -1161,8 +1210,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         }
         
         const freight = parseFloat(document.getElementById('freight').value) || 0;
-        const labor = parseFloat(document.getElementById('labor').value) || 0;
-        const grand = subtotalAfterPODiscount + finalVAT + freight + labor;
+        const grand = subtotalAfterPODiscount + finalVAT + freight;
         
         document.getElementById('item-subtotal-display').textContent = formatPHP(totalItemSubtotal);
         document.getElementById('item-discount-total').textContent = formatPHP(totalItemDiscount);
@@ -1179,8 +1227,7 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             totalVAT: finalVAT,
             grand,
             poDiscountAmount,
-            subtotalAfterPODiscount,
-            labor
+            subtotalAfterPODiscount
         };
     }
 
@@ -1522,7 +1569,6 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             warranty: document.getElementById('warranty').value,
             remarks: document.getElementById('remarks').value,
             freight: parseFloat(document.getElementById('freight').value) || 0,
-            labor: parseFloat(document.getElementById('labor').value) || 0,
             subtotal: totals.subtotal,
             total_vat: totals.totalVAT,
             total_amount: totals.grand,
@@ -1582,6 +1628,12 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
             const requestedBySelect = row.querySelector('.requested-by-select');
             const requestedBy = requestedBySelect ? requestedBySelect.value : '';
 
+            // Labor description (only for labor rows)
+            const laborInput = row.querySelector('.labor-desc-input');
+            const laborDescription = (isLaborItemName(item.item_name) && laborInput)
+                ? laborInput.value.trim()
+                : '';
+
             poData.items.push({
                 item_code: item.item_code,
                 item_name: item.item_name,
@@ -1595,7 +1647,8 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
                 vat_amount: vatAmount,
                 total_cost: discountedTotal,
                 truck_code: itemTruckCode,
-                requested_by: requestedBy
+                requested_by: requestedBy,
+                labor_description: laborDescription
             });
         });
         
@@ -1632,6 +1685,18 @@ if ($address_query && $row = $address_query->fetch_assoc()) {
         });
         if (missingRequester.length > 0) {
             alert(`Please select Requested By for the following item row(s): ${missingRequester.join(', ')}`);
+            return;
+        }
+
+        // Validate Labor Description on every labor row
+        const missingLabor = [];
+        itemRows.forEach(({ row, idx }) => {
+            if (isLaborRow(row) && !row.querySelector('.labor-desc-input').value.trim()) {
+                missingLabor.push(idx);
+            }
+        });
+        if (missingLabor.length > 0) {
+            alert(`Please enter a Labor Description for the following item row(s): ${missingLabor.join(', ')}`);
             return;
         }
         
